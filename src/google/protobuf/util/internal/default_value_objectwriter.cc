@@ -33,6 +33,7 @@
 #include <google/protobuf/stubs/hash.h>
 
 #include <google/protobuf/util/internal/constants.h>
+#include <google/protobuf/util/internal/utility.h>
 #include <google/protobuf/stubs/map_util.h>
 
 namespace google {
@@ -42,12 +43,25 @@ using util::Status;
 using util::StatusOr;
 namespace converter {
 
+namespace {
+// Helper function to convert string value to given data type by calling the
+// passed converter function on the DataPiece created from "value" argument.
+// If value is empty or if conversion fails, the default_value is returned.
+template <typename T>
+T ConvertTo(StringPiece value, StatusOr<T> (DataPiece::*converter_fn)() const,
+            T default_value) {
+  if (value.empty()) return default_value;
+  StatusOr<T> result = (DataPiece(value).*converter_fn)();
+  return result.ok() ? result.ValueOrDie() : default_value;
+}
+}  // namespace
+
 DefaultValueObjectWriter::DefaultValueObjectWriter(
     TypeResolver* type_resolver, const google::protobuf::Type& type,
     ObjectWriter* ow)
     : typeinfo_(TypeInfo::NewTypeInfo(type_resolver)),
+      own_typeinfo_(true),
       type_(type),
-      disable_normalize_(false),
       current_(NULL),
       root_(NULL),
       ow_(ow) {}
@@ -55,6 +69,9 @@ DefaultValueObjectWriter::DefaultValueObjectWriter(
 DefaultValueObjectWriter::~DefaultValueObjectWriter() {
   for (int i = 0; i < string_values_.size(); ++i) {
     delete string_values_[i];
+  }
+  if (own_typeinfo_) {
+    delete typeinfo_;
   }
 }
 
@@ -161,12 +178,6 @@ DefaultValueObjectWriter* DefaultValueObjectWriter::RenderNull(
   return this;
 }
 
-DefaultValueObjectWriter*
-DefaultValueObjectWriter::DisableCaseNormalizationForNextKey() {
-  disable_normalize_ = true;
-  return this;
-}
-
 DefaultValueObjectWriter::Node::Node(const string& name,
                                      const google::protobuf::Type* type,
                                      NodeKind kind, const DataPiece& data,
@@ -174,7 +185,6 @@ DefaultValueObjectWriter::Node::Node(const string& name,
     : name_(name),
       type_(type),
       kind_(kind),
-      disable_normalize_(false),
       is_any_(false),
       data_(data),
       is_placeholder_(is_placeholder) {}
@@ -194,36 +204,46 @@ DefaultValueObjectWriter::Node* DefaultValueObjectWriter::Node::FindChild(
 }
 
 void DefaultValueObjectWriter::Node::WriteTo(ObjectWriter* ow) {
-  if (disable_normalize_) {
-    ow->DisableCaseNormalizationForNextKey();
-  }
   if (kind_ == PRIMITIVE) {
     ObjectWriter::RenderDataPieceTo(data_, name_, ow);
     return;
   }
-  if (is_placeholder_) {
-    // If is_placeholder_ = true, we didn't see this node in the response, so
-    // skip output.
+
+  // Render maps. Empty maps are rendered as "{}".
+  if (kind_ == MAP) {
+    ow->StartObject(name_);
+    WriteChildren(ow);
+    ow->EndObject();
     return;
   }
+
+  // Write out lists. If we didn't have any list in response, write out empty
+  // list.
   if (kind_ == LIST) {
     ow->StartList(name_);
-  } else {
-    ow->StartObject(name_);
+    WriteChildren(ow);
+    ow->EndList();
+    return;
   }
+
+  // If is_placeholder_ = true, we didn't see this node in the response, so
+  // skip output.
+  if (is_placeholder_) return;
+
+  ow->StartObject(name_);
+  WriteChildren(ow);
+  ow->EndObject();
+}
+
+void DefaultValueObjectWriter::Node::WriteChildren(ObjectWriter* ow) {
   for (int i = 0; i < children_.size(); ++i) {
     Node* child = children_[i];
     child->WriteTo(ow);
   }
-  if (kind_ == LIST) {
-    ow->EndList();
-  } else {
-    ow->EndObject();
-  }
 }
 
 const google::protobuf::Type* DefaultValueObjectWriter::Node::GetMapValueType(
-    const google::protobuf::Type& found_type, TypeInfo* typeinfo) {
+    const google::protobuf::Type& found_type, const TypeInfo* typeinfo) {
   // If this field is a map, we should use the type of its "Value" as
   // the type of the child node.
   for (int i = 0; i < found_type.fields_size(); ++i) {
@@ -248,7 +268,8 @@ const google::protobuf::Type* DefaultValueObjectWriter::Node::GetMapValueType(
   return NULL;
 }
 
-void DefaultValueObjectWriter::Node::PopulateChildren(TypeInfo* typeinfo) {
+void DefaultValueObjectWriter::Node::PopulateChildren(
+    const TypeInfo* typeinfo) {
   // Ignores well known types that don't require automatically populating their
   // primitive children. For type "Any", we only populate its children when the
   // "@type" field is set.
@@ -305,21 +326,24 @@ void DefaultValueObjectWriter::Node::PopulateChildren(TypeInfo* typeinfo) {
         }
       }
     }
+
     if (!is_map &&
         field.cardinality() ==
             google::protobuf::Field_Cardinality_CARDINALITY_REPEATED) {
       kind = LIST;
     }
-    // If the child field is of primitive type, sets its data to the default
-    // value of its type.
+
     // If oneof_index() != 0, the child field is part of a "oneof", which means
     // the child field is optional and we shouldn't populate its default value.
-    google::protobuf::scoped_ptr<Node> child(
-        new Node(field.name(), field_type, kind,
-                 ((kind == PRIMITIVE && field.oneof_index() == 0)
-                      ? CreateDefaultDataPieceForField(field)
-                      : DataPiece::NullData()),
-                 true));
+    if (field.oneof_index() != 0) continue;
+
+    // If the child field is of primitive type, sets its data to the default
+    // value of its type.
+    google::protobuf::scoped_ptr<Node> child(new Node(
+        field.json_name(), field_type, kind,
+        kind == PRIMITIVE ? CreateDefaultDataPieceForField(field, typeinfo)
+                          : DataPiece::NullData(),
+        true));
     new_children.push_back(child.release());
   }
   // Adds all leftover nodes in children_ to the beginning of new_child.
@@ -338,45 +362,72 @@ void DefaultValueObjectWriter::MaybePopulateChildrenOfAny(Node* node) {
   // have been added, populates its children.
   if (node != NULL && node->is_any() && node->type() != NULL &&
       node->type()->name() != kAnyType && node->number_of_children() == 1) {
-    node->PopulateChildren(typeinfo_.get());
+    node->PopulateChildren(typeinfo_);
   }
 }
 
+DataPiece DefaultValueObjectWriter::FindEnumDefault(
+    const google::protobuf::Field& field, const TypeInfo* typeinfo) {
+  if (!field.default_value().empty()) return DataPiece(field.default_value());
+
+  const google::protobuf::Enum* enum_type =
+      typeinfo->GetEnumByTypeUrl(field.type_url());
+  if (!enum_type) {
+    GOOGLE_LOG(WARNING) << "Could not find enum with type '" << field.type_url()
+                 << "'";
+    return DataPiece::NullData();
+  }
+  // We treat the first value as the default if none is specified.
+  return enum_type->enumvalue_size() > 0
+             ? DataPiece(enum_type->enumvalue(0).name())
+             : DataPiece::NullData();
+}
+
 DataPiece DefaultValueObjectWriter::CreateDefaultDataPieceForField(
-    const google::protobuf::Field& field) {
+    const google::protobuf::Field& field, const TypeInfo* typeinfo) {
   switch (field.kind()) {
     case google::protobuf::Field_Kind_TYPE_DOUBLE: {
-      return DataPiece(static_cast<double>(0));
+      return DataPiece(ConvertTo<double>(
+          field.default_value(), &DataPiece::ToDouble, static_cast<double>(0)));
     }
     case google::protobuf::Field_Kind_TYPE_FLOAT: {
-      return DataPiece(static_cast<float>(0));
+      return DataPiece(ConvertTo<float>(
+          field.default_value(), &DataPiece::ToFloat, static_cast<float>(0)));
     }
     case google::protobuf::Field_Kind_TYPE_INT64:
     case google::protobuf::Field_Kind_TYPE_SINT64:
     case google::protobuf::Field_Kind_TYPE_SFIXED64: {
-      return DataPiece(static_cast<int64>(0));
+      return DataPiece(ConvertTo<int64>(
+          field.default_value(), &DataPiece::ToInt64, static_cast<int64>(0)));
     }
     case google::protobuf::Field_Kind_TYPE_UINT64:
     case google::protobuf::Field_Kind_TYPE_FIXED64: {
-      return DataPiece(static_cast<uint64>(0));
+      return DataPiece(ConvertTo<uint64>(
+          field.default_value(), &DataPiece::ToUint64, static_cast<uint64>(0)));
     }
     case google::protobuf::Field_Kind_TYPE_INT32:
     case google::protobuf::Field_Kind_TYPE_SINT32:
     case google::protobuf::Field_Kind_TYPE_SFIXED32: {
-      return DataPiece(static_cast<int32>(0));
+      return DataPiece(ConvertTo<int32>(
+          field.default_value(), &DataPiece::ToInt32, static_cast<int32>(0)));
     }
     case google::protobuf::Field_Kind_TYPE_BOOL: {
-      return DataPiece(false);
+      return DataPiece(
+          ConvertTo<bool>(field.default_value(), &DataPiece::ToBool, false));
     }
     case google::protobuf::Field_Kind_TYPE_STRING: {
-      return DataPiece(string());
+      return DataPiece(field.default_value());
     }
     case google::protobuf::Field_Kind_TYPE_BYTES: {
-      return DataPiece("", false);
+      return DataPiece(field.default_value(), false);
     }
     case google::protobuf::Field_Kind_TYPE_UINT32:
     case google::protobuf::Field_Kind_TYPE_FIXED32: {
-      return DataPiece(static_cast<uint32>(0));
+      return DataPiece(ConvertTo<uint32>(
+          field.default_value(), &DataPiece::ToUint32, static_cast<uint32>(0)));
+    }
+    case google::protobuf::Field_Kind_TYPE_ENUM: {
+      return FindEnumDefault(field, typeinfo);
     }
     default: { return DataPiece::NullData(); }
   }
@@ -387,8 +438,7 @@ DefaultValueObjectWriter* DefaultValueObjectWriter::StartObject(
   if (current_ == NULL) {
     root_.reset(new Node(name.ToString(), &type_, OBJECT, DataPiece::NullData(),
                          false));
-    root_->set_disable_normalize(GetAndResetDisableNormalize());
-    root_->PopulateChildren(typeinfo_.get());
+    root_->PopulateChildren(typeinfo_);
     current_ = root_.get();
     return this;
   }
@@ -407,9 +457,8 @@ DefaultValueObjectWriter* DefaultValueObjectWriter::StartObject(
   }
 
   child->set_is_placeholder(false);
-  child->set_disable_normalize(GetAndResetDisableNormalize());
   if (child->kind() == OBJECT && child->number_of_children() == 0) {
-    child->PopulateChildren(typeinfo_.get());
+    child->PopulateChildren(typeinfo_);
   }
 
   stack_.push(current_);
@@ -433,21 +482,18 @@ DefaultValueObjectWriter* DefaultValueObjectWriter::StartList(
   if (current_ == NULL) {
     root_.reset(
         new Node(name.ToString(), &type_, LIST, DataPiece::NullData(), false));
-    root_->set_disable_normalize(GetAndResetDisableNormalize());
     current_ = root_.get();
     return this;
   }
   MaybePopulateChildrenOfAny(current_);
   Node* child = current_->FindChild(name);
   if (child == NULL || child->kind() != LIST) {
-    GOOGLE_LOG(WARNING) << "Cannot find field '" << name << "'.";
     google::protobuf::scoped_ptr<Node> node(
         new Node(name.ToString(), NULL, LIST, DataPiece::NullData(), false));
     child = node.get();
     current_->AddChild(node.release());
   }
   child->set_is_placeholder(false);
-  child->set_disable_normalize(GetAndResetDisableNormalize());
 
   stack_.push(current_);
   current_ = child;
@@ -492,12 +538,11 @@ void DefaultValueObjectWriter::RenderDataPiece(StringPiece name,
     // first value field is rendered before we populate the children, because
     // the "value" field of a Any message could be omitted.
     if (current_->number_of_children() > 1 && current_->type() != NULL) {
-      current_->PopulateChildren(typeinfo_.get());
+      current_->PopulateChildren(typeinfo_);
     }
   }
   Node* child = current_->FindChild(name);
   if (child == NULL || child->kind() != PRIMITIVE) {
-    GOOGLE_LOG(WARNING) << "Cannot find primitive field '" << name << "'.";
     // No children are found, creates a new child.
     google::protobuf::scoped_ptr<Node> node(
         new Node(name.ToString(), NULL, PRIMITIVE, data, false));
@@ -506,7 +551,6 @@ void DefaultValueObjectWriter::RenderDataPiece(StringPiece name,
   } else {
     child->set_data(data);
   }
-  child->set_disable_normalize(GetAndResetDisableNormalize());
 }
 
 }  // namespace converter

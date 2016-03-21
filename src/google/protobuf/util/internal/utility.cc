@@ -30,17 +30,16 @@
 
 #include <google/protobuf/util/internal/utility.h>
 
-#include <cmath>
-#include <algorithm>
-#include <utility>
-
+#include <google/protobuf/stubs/callback.h>
 #include <google/protobuf/stubs/common.h>
+#include <google/protobuf/stubs/logging.h>
 #include <google/protobuf/wrappers.pb.h>
 #include <google/protobuf/descriptor.pb.h>
 #include <google/protobuf/descriptor.h>
 #include <google/protobuf/util/internal/constants.h>
 #include <google/protobuf/stubs/strutil.h>
 #include <google/protobuf/stubs/map_util.h>
+#include <google/protobuf/stubs/mathlimits.h>
 
 namespace google {
 namespace protobuf {
@@ -50,7 +49,8 @@ namespace converter {
 namespace {
 const StringPiece SkipWhiteSpace(StringPiece str) {
   StringPiece::size_type i;
-  for (i = 0; i < str.size() && isspace(str[i]); ++i) {}
+  for (i = 0; i < str.size() && isspace(str[i]); ++i) {
+  }
   GOOGLE_DCHECK(i == str.size() || !isspace(str[i]));
   return StringPiece(str, i);
 }
@@ -154,6 +154,19 @@ const google::protobuf::Field* FindFieldInTypeOrNull(
     for (int i = 0; i < type->fields_size(); ++i) {
       const google::protobuf::Field& field = type->fields(i);
       if (field.name() == field_name) {
+        return &field;
+      }
+    }
+  }
+  return NULL;
+}
+
+const google::protobuf::Field* FindJsonFieldInTypeOrNull(
+    const google::protobuf::Type* type, StringPiece json_name) {
+  if (type != NULL) {
+    for (int i = 0; i < type->fields_size(); ++i) {
+      const google::protobuf::Field& field = type->fields(i);
+      if (field.json_name() == json_name) {
         return &field;
       }
     }
@@ -299,30 +312,41 @@ bool IsMap(const google::protobuf::Field& field,
                                  "google.protobuf.MessageOptions.map_entry", false));
 }
 
+bool IsMessageSetWireFormat(const google::protobuf::Type& type) {
+  return GetBoolOptionOrDefault(
+      type.options(), "google.protobuf.MessageOptions.message_set_wire_format", false);
+}
+
 string DoubleAsString(double value) {
-  if (value == std::numeric_limits<double>::infinity()) return "Infinity";
-  if (value == -std::numeric_limits<double>::infinity()) return "-Infinity";
-  if (::isnan(value)) return "NaN";
+  if (MathLimits<double>::IsPosInf(value)) return "Infinity";
+  if (MathLimits<double>::IsNegInf(value)) return "-Infinity";
+  if (MathLimits<double>::IsNaN(value)) return "NaN";
 
   return SimpleDtoa(value);
 }
 
 string FloatAsString(float value) {
-  if (isfinite(value)) return SimpleFtoa(value);
+  if (MathLimits<float>::IsFinite(value)) return SimpleFtoa(value);
   return DoubleAsString(value);
 }
 
-bool SafeStrToFloat(StringPiece str, float *value) {
+bool SafeStrToFloat(StringPiece str, float* value) {
   double double_value;
   if (!safe_strtod(str, &double_value)) {
     return false;
   }
-  *value = static_cast<float>(double_value);
 
-  if ((*value ==  numeric_limits<float>::infinity()) ||
-      (*value == -numeric_limits<float>::infinity())) {
+  if (MathLimits<double>::IsInf(double_value) ||
+      MathLimits<double>::IsNaN(double_value))
+    return false;
+
+  // Fail if the value is not representable in float.
+  if (double_value > std::numeric_limits<float>::max() ||
+      double_value < -std::numeric_limits<float>::max()) {
     return false;
   }
+
+  *value = static_cast<float>(double_value);
   return true;
 }
 

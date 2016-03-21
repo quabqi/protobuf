@@ -2,11 +2,12 @@
 // source: google/protobuf/duration.proto
 
 #define INTERNAL_SUPPRESS_PROTOBUF_FIELD_DEPRECATION
-#include "google/protobuf/duration.pb.h"
+#include <google/protobuf/duration.pb.h>
 
 #include <algorithm>
 
 #include <google/protobuf/stubs/common.h>
+#include <google/protobuf/stubs/port.h>
 #include <google/protobuf/stubs/once.h>
 #include <google/protobuf/io/coded_stream.h>
 #include <google/protobuf/wire_format_lite_inl.h>
@@ -82,9 +83,9 @@ void protobuf_AddDesc_google_2fprotobuf_2fduration_2eproto() {
   ::google::protobuf::DescriptorPool::InternalAddGeneratedFile(
     "\n\036google/protobuf/duration.proto\022\017google"
     ".protobuf\"*\n\010Duration\022\017\n\007seconds\030\001 \001(\003\022\r"
-    "\n\005nanos\030\002 \001(\005BH\n\023com.google.protobufB\rDu"
-    "rationProtoP\001\240\001\001\242\002\003GPB\252\002\026Google.Protocol"
-    "Buffersb\006proto3", 175);
+    "\n\005nanos\030\002 \001(\005BP\n\023com.google.protobufB\rDu"
+    "rationProtoP\001\240\001\001\242\002\003GPB\252\002\036Google.Protobuf"
+    ".WellKnownTypesb\006proto3", 183);
   ::google::protobuf::MessageFactory::InternalRegisterGeneratedFile(
     "google/protobuf/duration.proto", &protobuf_RegisterTypes);
   Duration::default_instance_ = new Duration();
@@ -111,10 +112,10 @@ static void MergeFromFail(int line) {
 
 // ===================================================================
 
-#ifndef _MSC_VER
+#if !defined(_MSC_VER) || _MSC_VER >= 1900
 const int Duration::kSecondsFieldNumber;
 const int Duration::kNanosFieldNumber;
-#endif  // !_MSC_VER
+#endif  // !defined(_MSC_VER) || _MSC_VER >= 1900
 
 Duration::Duration()
   : ::google::protobuf::Message(), _internal_metadata_(NULL) {

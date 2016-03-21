@@ -153,25 +153,29 @@ TEST_F(JsonObjectWriterTest, RenderPrimitives) {
       ->EndObject();
   EXPECT_EQ(
       "{\"bool\":true,"
-      "\"double\":" + ValueAsString<double>(1.7976931348623157e+308) + ","
-      "\"float\":" + ValueAsString<float>(3.4028235e+38) + ","
-      "\"int\":-2147483648,"
-      "\"long\":\"-9223372036854775808\","
-      "\"bytes\":\"YWJyYWNhZGFicmE=\","
-      "\"string\":\"string\","
-      "\"emptybytes\":\"\","
-      "\"emptystring\":\"\"}",
+      "\"double\":" +
+          ValueAsString<double>(std::numeric_limits<double>::max()) +
+          ","
+          "\"float\":" +
+          ValueAsString<float>(std::numeric_limits<float>::max()) +
+          ","
+          "\"int\":-2147483648,"
+          "\"long\":\"-9223372036854775808\","
+          "\"bytes\":\"YWJyYWNhZGFicmE=\","
+          "\"string\":\"string\","
+          "\"emptybytes\":\"\","
+          "\"emptystring\":\"\"}",
       output_.substr(0, out_stream_->ByteCount()));
 }
 
-TEST_F(JsonObjectWriterTest, BytesEncodesAsWebSafeBase64) {
+TEST_F(JsonObjectWriterTest, BytesEncodesAsNonWebSafeBase64) {
   string s;
   s.push_back('\377');
   s.push_back('\357');
   ow_ = new JsonObjectWriter("", out_stream_);
   ow_->StartObject("")->RenderBytes("bytes", s)->EndObject();
   // Non-web-safe would encode this as "/+8="
-  EXPECT_EQ("{\"bytes\":\"_-8=\"}",
+  EXPECT_EQ("{\"bytes\":\"/+8=\"}",
             output_.substr(0, out_stream_->ByteCount()));
 }
 

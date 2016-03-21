@@ -211,10 +211,10 @@ static BOOL TestingEnum_IsValidValue(int32_t value) {
   // Equal, so they must have same hash.
   XCTAssertEqual([dict1 hash], [dict1prime hash]);
 
-  // 2 is save keys, different values; not equal.
+  // 2 is same keys, different values; not equal.
   XCTAssertNotEqualObjects(dict1, dict2);
 
-  // 3 is different keys, samae values; not equal.
+  // 3 is different keys, same values; not equal.
   XCTAssertNotEqualObjects(dict1, dict3);
 
   // 4 extra pair; not equal
@@ -568,10 +568,10 @@ static BOOL TestingEnum_IsValidValue(int32_t value) {
   // Equal, so they must have same hash.
   XCTAssertEqual([dict1 hash], [dict1prime hash]);
 
-  // 2 is save keys, different values; not equal.
+  // 2 is same keys, different values; not equal.
   XCTAssertNotEqualObjects(dict1, dict2);
 
-  // 3 is different keys, samae values; not equal.
+  // 3 is different keys, same values; not equal.
   XCTAssertNotEqualObjects(dict1, dict3);
 
   // 4 extra pair; not equal
@@ -925,10 +925,10 @@ static BOOL TestingEnum_IsValidValue(int32_t value) {
   // Equal, so they must have same hash.
   XCTAssertEqual([dict1 hash], [dict1prime hash]);
 
-  // 2 is save keys, different values; not equal.
+  // 2 is same keys, different values; not equal.
   XCTAssertNotEqualObjects(dict1, dict2);
 
-  // 3 is different keys, samae values; not equal.
+  // 3 is different keys, same values; not equal.
   XCTAssertNotEqualObjects(dict1, dict3);
 
   // 4 extra pair; not equal
@@ -1282,10 +1282,10 @@ static BOOL TestingEnum_IsValidValue(int32_t value) {
   // Equal, so they must have same hash.
   XCTAssertEqual([dict1 hash], [dict1prime hash]);
 
-  // 2 is save keys, different values; not equal.
+  // 2 is same keys, different values; not equal.
   XCTAssertNotEqualObjects(dict1, dict2);
 
-  // 3 is different keys, samae values; not equal.
+  // 3 is different keys, same values; not equal.
   XCTAssertNotEqualObjects(dict1, dict3);
 
   // 4 extra pair; not equal
@@ -1639,10 +1639,10 @@ static BOOL TestingEnum_IsValidValue(int32_t value) {
   // Equal, so they must have same hash.
   XCTAssertEqual([dict1 hash], [dict1prime hash]);
 
-  // 2 is save keys, different values; not equal.
+  // 2 is same keys, different values; not equal.
   XCTAssertNotEqualObjects(dict1, dict2);
 
-  // 3 is different keys, samae values; not equal.
+  // 3 is different keys, same values; not equal.
   XCTAssertNotEqualObjects(dict1, dict3);
 
   // 4 extra pair; not equal
@@ -1996,10 +1996,10 @@ static BOOL TestingEnum_IsValidValue(int32_t value) {
   // Equal, so they must have same hash.
   XCTAssertEqual([dict1 hash], [dict1prime hash]);
 
-  // 2 is save keys, different values; not equal.
+  // 2 is same keys, different values; not equal.
   XCTAssertNotEqualObjects(dict1, dict2);
 
-  // 3 is different keys, samae values; not equal.
+  // 3 is different keys, same values; not equal.
   XCTAssertNotEqualObjects(dict1, dict3);
 
   // 4 extra pair; not equal
@@ -2353,10 +2353,10 @@ static BOOL TestingEnum_IsValidValue(int32_t value) {
   // Equal, so they must have same hash.
   XCTAssertEqual([dict1 hash], [dict1prime hash]);
 
-  // 2 is save keys, different values; not equal.
+  // 2 is same keys, different values; not equal.
   XCTAssertNotEqualObjects(dict1, dict2);
 
-  // 3 is different keys, samae values; not equal.
+  // 3 is different keys, same values; not equal.
   XCTAssertNotEqualObjects(dict1, dict3);
 
   // 4 extra pair; not equal
@@ -2710,10 +2710,10 @@ static BOOL TestingEnum_IsValidValue(int32_t value) {
   // Equal, so they must have same hash.
   XCTAssertEqual([dict1 hash], [dict1prime hash]);
 
-  // 2 is save keys, different values; not equal.
+  // 2 is same keys, different values; not equal.
   XCTAssertNotEqualObjects(dict1, dict2);
 
-  // 3 is different keys, samae values; not equal.
+  // 3 is different keys, same values; not equal.
   XCTAssertNotEqualObjects(dict1, dict3);
 
   // 4 extra pair; not equal
@@ -3071,10 +3071,10 @@ static BOOL TestingEnum_IsValidValue(int32_t value) {
   // Equal, so they must have same hash.
   XCTAssertEqual([dict1 hash], [dict1prime hash]);
 
-  // 2 is save keys, different values; not equal.
+  // 2 is same keys, different values; not equal.
   XCTAssertNotEqualObjects(dict1, dict2);
 
-  // 3 is different keys, samae values; not equal.
+  // 3 is different keys, same values; not equal.
   XCTAssertNotEqualObjects(dict1, dict3);
 
   // 4 extra pair; not equal
@@ -3363,51 +3363,51 @@ static BOOL TestingEnum_IsValidValue(int32_t value) {
 @implementation GPBInt64ObjectDictionaryTests
 
 - (void)testEmpty {
-  GPBInt64ObjectDictionary *dict = [[GPBInt64ObjectDictionary alloc] init];
+  GPBInt64ObjectDictionary<NSString*> *dict = [[GPBInt64ObjectDictionary alloc] init];
   XCTAssertNotNil(dict);
   XCTAssertEqual(dict.count, 0U);
-  XCTAssertNil([dict valueForKey:21LL]);
-  [dict enumerateKeysAndValuesUsingBlock:^(int64_t aKey, id aValue, BOOL *stop) {
-    #pragma unused(aKey, aValue, stop)
+  XCTAssertNil([dict objectForKey:21LL]);
+  [dict enumerateKeysAndObjectsUsingBlock:^(int64_t aKey, NSString* aObject, BOOL *stop) {
+    #pragma unused(aKey, aObject, stop)
     XCTFail(@"Shouldn't get here!");
   }];
   [dict release];
 }
 
 - (void)testOne {
-  GPBInt64ObjectDictionary *dict = [GPBInt64ObjectDictionary dictionaryWithValue:@"abc" forKey:21LL];
+  GPBInt64ObjectDictionary<NSString*> *dict = [GPBInt64ObjectDictionary dictionaryWithObject:@"abc" forKey:21LL];
   XCTAssertNotNil(dict);
   XCTAssertEqual(dict.count, 1U);
-  XCTAssertEqualObjects([dict valueForKey:21LL], @"abc");
-  XCTAssertNil([dict valueForKey:22LL]);
-  [dict enumerateKeysAndValuesUsingBlock:^(int64_t aKey, id aValue, BOOL *stop) {
+  XCTAssertEqualObjects([dict objectForKey:21LL], @"abc");
+  XCTAssertNil([dict objectForKey:22LL]);
+  [dict enumerateKeysAndObjectsUsingBlock:^(int64_t aKey, NSString* aObject, BOOL *stop) {
     XCTAssertEqual(aKey, 21LL);
-    XCTAssertEqualObjects(aValue, @"abc");
+    XCTAssertEqualObjects(aObject, @"abc");
     XCTAssertNotEqual(stop, NULL);
   }];
 }
 
 - (void)testBasics {
   const int64_t kKeys[] = { 21LL, 22LL, 23LL };
-  const id kValues[] = { @"abc", @"def", @"ghi" };
-  GPBInt64ObjectDictionary *dict =
-      [[GPBInt64ObjectDictionary alloc] initWithValues:kValues
-                                               forKeys:kKeys
-                                                 count:GPBARRAYSIZE(kValues)];
+  const NSString* kObjects[] = { @"abc", @"def", @"ghi" };
+  GPBInt64ObjectDictionary<NSString*> *dict =
+      [[GPBInt64ObjectDictionary alloc] initWithObjects:kObjects
+                                                forKeys:kKeys
+                                                  count:GPBARRAYSIZE(kObjects)];
   XCTAssertNotNil(dict);
   XCTAssertEqual(dict.count, 3U);
-  XCTAssertEqualObjects([dict valueForKey:21LL], @"abc");
-  XCTAssertEqualObjects([dict valueForKey:22LL], @"def");
-  XCTAssertEqualObjects([dict valueForKey:23LL], @"ghi");
-  XCTAssertNil([dict valueForKey:24LL]);
+  XCTAssertEqualObjects([dict objectForKey:21LL], @"abc");
+  XCTAssertEqualObjects([dict objectForKey:22LL], @"def");
+  XCTAssertEqualObjects([dict objectForKey:23LL], @"ghi");
+  XCTAssertNil([dict objectForKey:24LL]);
 
   __block NSUInteger idx = 0;
   int64_t *seenKeys = malloc(3 * sizeof(int64_t));
-  id *seenValues = malloc(3 * sizeof(id));
-  [dict enumerateKeysAndValuesUsingBlock:^(int64_t aKey, id aValue, BOOL *stop) {
+  NSString* *seenObjects = malloc(3 * sizeof(NSString*));
+  [dict enumerateKeysAndObjectsUsingBlock:^(int64_t aKey, NSString* aObject, BOOL *stop) {
     XCTAssertLessThan(idx, 3U);
     seenKeys[idx] = aKey;
-    seenValues[idx] = aValue;
+    seenObjects[idx] = aObject;
     XCTAssertNotEqual(stop, NULL);
     ++idx;
   }];
@@ -3416,18 +3416,18 @@ static BOOL TestingEnum_IsValidValue(int32_t value) {
     for (int j = 0; (j < 3) && !foundKey; ++j) {
       if (kKeys[i] == seenKeys[j]) {
         foundKey = YES;
-        XCTAssertEqualObjects(kValues[i], seenValues[j], @"i = %d, j = %d", i, j);
+        XCTAssertEqualObjects(kObjects[i], seenObjects[j], @"i = %d, j = %d", i, j);
       }
     }
     XCTAssertTrue(foundKey, @"i = %d", i);
   }
   free(seenKeys);
-  free(seenValues);
+  free(seenObjects);
 
   // Stopping the enumeration.
   idx = 0;
-  [dict enumerateKeysAndValuesUsingBlock:^(int64_t aKey, id aValue, BOOL *stop) {
-    #pragma unused(aKey, aValue)
+  [dict enumerateKeysAndObjectsUsingBlock:^(int64_t aKey, NSString* aObject, BOOL *stop) {
+    #pragma unused(aKey, aObject)
     if (idx == 1) *stop = YES;
     XCTAssertNotEqual(idx, 2U);
     ++idx;
@@ -3438,33 +3438,33 @@ static BOOL TestingEnum_IsValidValue(int32_t value) {
 - (void)testEquality {
   const int64_t kKeys1[] = { 21LL, 22LL, 23LL, 24LL };
   const int64_t kKeys2[] = { 22LL, 21LL, 24LL };
-  const id kValues1[] = { @"abc", @"def", @"ghi" };
-  const id kValues2[] = { @"abc", @"jkl", @"ghi" };
-  const id kValues3[] = { @"abc", @"def", @"ghi", @"jkl" };
-  GPBInt64ObjectDictionary *dict1 =
-      [[GPBInt64ObjectDictionary alloc] initWithValues:kValues1
-                                               forKeys:kKeys1
-                                                 count:GPBARRAYSIZE(kValues1)];
+  const NSString* kObjects1[] = { @"abc", @"def", @"ghi" };
+  const NSString* kObjects2[] = { @"abc", @"jkl", @"ghi" };
+  const NSString* kObjects3[] = { @"abc", @"def", @"ghi", @"jkl" };
+  GPBInt64ObjectDictionary<NSString*> *dict1 =
+      [[GPBInt64ObjectDictionary alloc] initWithObjects:kObjects1
+                                                forKeys:kKeys1
+                                                  count:GPBARRAYSIZE(kObjects1)];
   XCTAssertNotNil(dict1);
-  GPBInt64ObjectDictionary *dict1prime =
-      [[GPBInt64ObjectDictionary alloc] initWithValues:kValues1
-                                               forKeys:kKeys1
-                                                 count:GPBARRAYSIZE(kValues1)];
+  GPBInt64ObjectDictionary<NSString*> *dict1prime =
+      [[GPBInt64ObjectDictionary alloc] initWithObjects:kObjects1
+                                                forKeys:kKeys1
+                                                  count:GPBARRAYSIZE(kObjects1)];
   XCTAssertNotNil(dict1prime);
-  GPBInt64ObjectDictionary *dict2 =
-      [[GPBInt64ObjectDictionary alloc] initWithValues:kValues2
-                                               forKeys:kKeys1
-                                                 count:GPBARRAYSIZE(kValues2)];
+  GPBInt64ObjectDictionary<NSString*> *dict2 =
+      [[GPBInt64ObjectDictionary alloc] initWithObjects:kObjects2
+                                                forKeys:kKeys1
+                                                  count:GPBARRAYSIZE(kObjects2)];
   XCTAssertNotNil(dict2);
-  GPBInt64ObjectDictionary *dict3 =
-      [[GPBInt64ObjectDictionary alloc] initWithValues:kValues1
-                                               forKeys:kKeys2
-                                                 count:GPBARRAYSIZE(kValues1)];
+  GPBInt64ObjectDictionary<NSString*> *dict3 =
+      [[GPBInt64ObjectDictionary alloc] initWithObjects:kObjects1
+                                                forKeys:kKeys2
+                                                  count:GPBARRAYSIZE(kObjects1)];
   XCTAssertNotNil(dict3);
-  GPBInt64ObjectDictionary *dict4 =
-      [[GPBInt64ObjectDictionary alloc] initWithValues:kValues3
-                                               forKeys:kKeys1
-                                                 count:GPBARRAYSIZE(kValues3)];
+  GPBInt64ObjectDictionary<NSString*> *dict4 =
+      [[GPBInt64ObjectDictionary alloc] initWithObjects:kObjects3
+                                                forKeys:kKeys1
+                                                  count:GPBARRAYSIZE(kObjects3)];
   XCTAssertNotNil(dict4);
 
   // 1/1Prime should be different objects, but equal.
@@ -3473,10 +3473,10 @@ static BOOL TestingEnum_IsValidValue(int32_t value) {
   // Equal, so they must have same hash.
   XCTAssertEqual([dict1 hash], [dict1prime hash]);
 
-  // 2 is save keys, different values; not equal.
+  // 2 is same keys, different objects; not equal.
   XCTAssertNotEqualObjects(dict1, dict2);
 
-  // 3 is different keys, samae values; not equal.
+  // 3 is different keys, same objects; not equal.
   XCTAssertNotEqualObjects(dict1, dict3);
 
   // 4 extra pair; not equal
@@ -3491,14 +3491,14 @@ static BOOL TestingEnum_IsValidValue(int32_t value) {
 
 - (void)testCopy {
   const int64_t kKeys[] = { 21LL, 22LL, 23LL, 24LL };
-  const id kValues[] = { @"abc", @"def", @"ghi", @"jkl" };
-  GPBInt64ObjectDictionary *dict =
-      [[GPBInt64ObjectDictionary alloc] initWithValues:kValues
-                                               forKeys:kKeys
-                                                 count:GPBARRAYSIZE(kValues)];
+  const NSString* kObjects[] = { @"abc", @"def", @"ghi", @"jkl" };
+  GPBInt64ObjectDictionary<NSString*> *dict =
+      [[GPBInt64ObjectDictionary alloc] initWithObjects:kObjects
+                                                forKeys:kKeys
+                                                  count:GPBARRAYSIZE(kObjects)];
   XCTAssertNotNil(dict);
 
-  GPBInt64ObjectDictionary *dict2 = [dict copy];
+  GPBInt64ObjectDictionary<NSString*> *dict2 = [dict copy];
   XCTAssertNotNil(dict2);
 
   // Should be new object but equal.
@@ -3512,14 +3512,14 @@ static BOOL TestingEnum_IsValidValue(int32_t value) {
 
 - (void)testDictionaryFromDictionary {
   const int64_t kKeys[] = { 21LL, 22LL, 23LL, 24LL };
-  const id kValues[] = { @"abc", @"def", @"ghi", @"jkl" };
-  GPBInt64ObjectDictionary *dict =
-      [[GPBInt64ObjectDictionary alloc] initWithValues:kValues
-                                               forKeys:kKeys
-                                                 count:GPBARRAYSIZE(kValues)];
+  const NSString* kObjects[] = { @"abc", @"def", @"ghi", @"jkl" };
+  GPBInt64ObjectDictionary<NSString*> *dict =
+      [[GPBInt64ObjectDictionary alloc] initWithObjects:kObjects
+                                                forKeys:kKeys
+                                                  count:GPBARRAYSIZE(kObjects)];
   XCTAssertNotNil(dict);
 
-  GPBInt64ObjectDictionary *dict2 =
+  GPBInt64ObjectDictionary<NSString*> *dict2 =
       [GPBInt64ObjectDictionary dictionaryWithDictionary:dict];
   XCTAssertNotNil(dict2);
 
@@ -3530,112 +3530,112 @@ static BOOL TestingEnum_IsValidValue(int32_t value) {
 }
 
 - (void)testAdds {
-  GPBInt64ObjectDictionary *dict = [GPBInt64ObjectDictionary dictionary];
+  GPBInt64ObjectDictionary<NSString*> *dict = [GPBInt64ObjectDictionary dictionary];
   XCTAssertNotNil(dict);
 
   XCTAssertEqual(dict.count, 0U);
-  [dict setValue:@"abc" forKey:21LL];
+  [dict setObject:@"abc" forKey:21LL];
   XCTAssertEqual(dict.count, 1U);
 
   const int64_t kKeys[] = { 22LL, 23LL, 24LL };
-  const id kValues[] = { @"def", @"ghi", @"jkl" };
-  GPBInt64ObjectDictionary *dict2 =
-      [[GPBInt64ObjectDictionary alloc] initWithValues:kValues
-                                               forKeys:kKeys
-                                                 count:GPBARRAYSIZE(kValues)];
+  const NSString* kObjects[] = { @"def", @"ghi", @"jkl" };
+  GPBInt64ObjectDictionary<NSString*> *dict2 =
+      [[GPBInt64ObjectDictionary alloc] initWithObjects:kObjects
+                                                forKeys:kKeys
+                                                  count:GPBARRAYSIZE(kObjects)];
   XCTAssertNotNil(dict2);
   [dict addEntriesFromDictionary:dict2];
   XCTAssertEqual(dict.count, 4U);
 
-  XCTAssertEqualObjects([dict valueForKey:21LL], @"abc");
-  XCTAssertEqualObjects([dict valueForKey:22LL], @"def");
-  XCTAssertEqualObjects([dict valueForKey:23LL], @"ghi");
-  XCTAssertEqualObjects([dict valueForKey:24LL], @"jkl");
+  XCTAssertEqualObjects([dict objectForKey:21LL], @"abc");
+  XCTAssertEqualObjects([dict objectForKey:22LL], @"def");
+  XCTAssertEqualObjects([dict objectForKey:23LL], @"ghi");
+  XCTAssertEqualObjects([dict objectForKey:24LL], @"jkl");
   [dict2 release];
 }
 
 - (void)testRemove {
   const int64_t kKeys[] = { 21LL, 22LL, 23LL, 24LL };
-  const id kValues[] = { @"abc", @"def", @"ghi", @"jkl" };
-  GPBInt64ObjectDictionary *dict =
-      [[GPBInt64ObjectDictionary alloc] initWithValues:kValues
-                                        forKeys:kKeys
-                                          count:GPBARRAYSIZE(kValues)];
+  const NSString* kObjects[] = { @"abc", @"def", @"ghi", @"jkl" };
+  GPBInt64ObjectDictionary<NSString*> *dict =
+      [[GPBInt64ObjectDictionary alloc] initWithObjects:kObjects
+                                         forKeys:kKeys
+                                           count:GPBARRAYSIZE(kObjects)];
   XCTAssertNotNil(dict);
   XCTAssertEqual(dict.count, 4U);
 
-  [dict removeValueForKey:22LL];
+  [dict removeObjectForKey:22LL];
   XCTAssertEqual(dict.count, 3U);
-  XCTAssertEqualObjects([dict valueForKey:21LL], @"abc");
-  XCTAssertNil([dict valueForKey:22LL]);
-  XCTAssertEqualObjects([dict valueForKey:23LL], @"ghi");
-  XCTAssertEqualObjects([dict valueForKey:24LL], @"jkl");
+  XCTAssertEqualObjects([dict objectForKey:21LL], @"abc");
+  XCTAssertNil([dict objectForKey:22LL]);
+  XCTAssertEqualObjects([dict objectForKey:23LL], @"ghi");
+  XCTAssertEqualObjects([dict objectForKey:24LL], @"jkl");
 
   // Remove again does nothing.
-  [dict removeValueForKey:22LL];
+  [dict removeObjectForKey:22LL];
   XCTAssertEqual(dict.count, 3U);
-  XCTAssertEqualObjects([dict valueForKey:21LL], @"abc");
-  XCTAssertNil([dict valueForKey:22LL]);
-  XCTAssertEqualObjects([dict valueForKey:23LL], @"ghi");
-  XCTAssertEqualObjects([dict valueForKey:24LL], @"jkl");
+  XCTAssertEqualObjects([dict objectForKey:21LL], @"abc");
+  XCTAssertNil([dict objectForKey:22LL]);
+  XCTAssertEqualObjects([dict objectForKey:23LL], @"ghi");
+  XCTAssertEqualObjects([dict objectForKey:24LL], @"jkl");
 
-  [dict removeValueForKey:24LL];
+  [dict removeObjectForKey:24LL];
   XCTAssertEqual(dict.count, 2U);
-  XCTAssertEqualObjects([dict valueForKey:21LL], @"abc");
-  XCTAssertNil([dict valueForKey:22LL]);
-  XCTAssertEqualObjects([dict valueForKey:23LL], @"ghi");
-  XCTAssertNil([dict valueForKey:24LL]);
+  XCTAssertEqualObjects([dict objectForKey:21LL], @"abc");
+  XCTAssertNil([dict objectForKey:22LL]);
+  XCTAssertEqualObjects([dict objectForKey:23LL], @"ghi");
+  XCTAssertNil([dict objectForKey:24LL]);
 
   [dict removeAll];
   XCTAssertEqual(dict.count, 0U);
-  XCTAssertNil([dict valueForKey:21LL]);
-  XCTAssertNil([dict valueForKey:22LL]);
-  XCTAssertNil([dict valueForKey:23LL]);
-  XCTAssertNil([dict valueForKey:24LL]);
+  XCTAssertNil([dict objectForKey:21LL]);
+  XCTAssertNil([dict objectForKey:22LL]);
+  XCTAssertNil([dict objectForKey:23LL]);
+  XCTAssertNil([dict objectForKey:24LL]);
   [dict release];
 }
 
 - (void)testInplaceMutation {
   const int64_t kKeys[] = { 21LL, 22LL, 23LL, 24LL };
-  const id kValues[] = { @"abc", @"def", @"ghi", @"jkl" };
-  GPBInt64ObjectDictionary *dict =
-      [[GPBInt64ObjectDictionary alloc] initWithValues:kValues
-                                        forKeys:kKeys
-                                          count:GPBARRAYSIZE(kValues)];
+  const NSString* kObjects[] = { @"abc", @"def", @"ghi", @"jkl" };
+  GPBInt64ObjectDictionary<NSString*> *dict =
+      [[GPBInt64ObjectDictionary alloc] initWithObjects:kObjects
+                                         forKeys:kKeys
+                                           count:GPBARRAYSIZE(kObjects)];
   XCTAssertNotNil(dict);
   XCTAssertEqual(dict.count, 4U);
-  XCTAssertEqualObjects([dict valueForKey:21LL], @"abc");
-  XCTAssertEqualObjects([dict valueForKey:22LL], @"def");
-  XCTAssertEqualObjects([dict valueForKey:23LL], @"ghi");
-  XCTAssertEqualObjects([dict valueForKey:24LL], @"jkl");
+  XCTAssertEqualObjects([dict objectForKey:21LL], @"abc");
+  XCTAssertEqualObjects([dict objectForKey:22LL], @"def");
+  XCTAssertEqualObjects([dict objectForKey:23LL], @"ghi");
+  XCTAssertEqualObjects([dict objectForKey:24LL], @"jkl");
 
-  [dict setValue:@"jkl" forKey:21LL];
+  [dict setObject:@"jkl" forKey:21LL];
   XCTAssertEqual(dict.count, 4U);
-  XCTAssertEqualObjects([dict valueForKey:21LL], @"jkl");
-  XCTAssertEqualObjects([dict valueForKey:22LL], @"def");
-  XCTAssertEqualObjects([dict valueForKey:23LL], @"ghi");
-  XCTAssertEqualObjects([dict valueForKey:24LL], @"jkl");
+  XCTAssertEqualObjects([dict objectForKey:21LL], @"jkl");
+  XCTAssertEqualObjects([dict objectForKey:22LL], @"def");
+  XCTAssertEqualObjects([dict objectForKey:23LL], @"ghi");
+  XCTAssertEqualObjects([dict objectForKey:24LL], @"jkl");
 
-  [dict setValue:@"def" forKey:24LL];
+  [dict setObject:@"def" forKey:24LL];
   XCTAssertEqual(dict.count, 4U);
-  XCTAssertEqualObjects([dict valueForKey:21LL], @"jkl");
-  XCTAssertEqualObjects([dict valueForKey:22LL], @"def");
-  XCTAssertEqualObjects([dict valueForKey:23LL], @"ghi");
-  XCTAssertEqualObjects([dict valueForKey:24LL], @"def");
+  XCTAssertEqualObjects([dict objectForKey:21LL], @"jkl");
+  XCTAssertEqualObjects([dict objectForKey:22LL], @"def");
+  XCTAssertEqualObjects([dict objectForKey:23LL], @"ghi");
+  XCTAssertEqualObjects([dict objectForKey:24LL], @"def");
 
   const int64_t kKeys2[] = { 22LL, 23LL };
-  const id kValues2[] = { @"ghi", @"abc" };
-  GPBInt64ObjectDictionary *dict2 =
-      [[GPBInt64ObjectDictionary alloc] initWithValues:kValues2
-                                               forKeys:kKeys2
-                                                 count:GPBARRAYSIZE(kValues2)];
+  const NSString* kObjects2[] = { @"ghi", @"abc" };
+  GPBInt64ObjectDictionary<NSString*> *dict2 =
+      [[GPBInt64ObjectDictionary alloc] initWithObjects:kObjects2
+                                                forKeys:kKeys2
+                                                  count:GPBARRAYSIZE(kObjects2)];
   XCTAssertNotNil(dict2);
   [dict addEntriesFromDictionary:dict2];
   XCTAssertEqual(dict.count, 4U);
-  XCTAssertEqualObjects([dict valueForKey:21LL], @"jkl");
-  XCTAssertEqualObjects([dict valueForKey:22LL], @"ghi");
-  XCTAssertEqualObjects([dict valueForKey:23LL], @"abc");
-  XCTAssertEqualObjects([dict valueForKey:24LL], @"def");
+  XCTAssertEqualObjects([dict objectForKey:21LL], @"jkl");
+  XCTAssertEqualObjects([dict objectForKey:22LL], @"ghi");
+  XCTAssertEqualObjects([dict objectForKey:23LL], @"abc");
+  XCTAssertEqualObjects([dict objectForKey:24LL], @"def");
 
   [dict2 release];
   [dict release];

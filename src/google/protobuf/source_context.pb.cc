@@ -2,11 +2,12 @@
 // source: google/protobuf/source_context.proto
 
 #define INTERNAL_SUPPRESS_PROTOBUF_FIELD_DEPRECATION
-#include "google/protobuf/source_context.pb.h"
+#include <google/protobuf/source_context.pb.h>
 
 #include <algorithm>
 
 #include <google/protobuf/stubs/common.h>
+#include <google/protobuf/stubs/port.h>
 #include <google/protobuf/stubs/once.h>
 #include <google/protobuf/io/coded_stream.h>
 #include <google/protobuf/wire_format_lite_inl.h>
@@ -81,8 +82,9 @@ void protobuf_AddDesc_google_2fprotobuf_2fsource_5fcontext_2eproto() {
   ::google::protobuf::DescriptorPool::InternalAddGeneratedFile(
     "\n$google/protobuf/source_context.proto\022\017"
     "google.protobuf\"\"\n\rSourceContext\022\021\n\tfile"
-    "_name\030\001 \001(\tB1\n\023com.google.protobufB\022Sour"
-    "ceContextProtoP\001\242\002\003GPBb\006proto3", 150);
+    "_name\030\001 \001(\tBU\n\023com.google.protobufB\022Sour"
+    "ceContextProtoP\001\240\001\001\242\002\003GPB\252\002\036Google.Proto"
+    "buf.WellKnownTypesb\006proto3", 186);
   ::google::protobuf::MessageFactory::InternalRegisterGeneratedFile(
     "google/protobuf/source_context.proto", &protobuf_RegisterTypes);
   SourceContext::default_instance_ = new SourceContext();
@@ -109,9 +111,9 @@ static void MergeFromFail(int line) {
 
 // ===================================================================
 
-#ifndef _MSC_VER
+#if !defined(_MSC_VER) || _MSC_VER >= 1900
 const int SourceContext::kFileNameFieldNumber;
-#endif  // !_MSC_VER
+#endif  // !defined(_MSC_VER) || _MSC_VER >= 1900
 
 SourceContext::SourceContext()
   : ::google::protobuf::Message(), _internal_metadata_(NULL) {
@@ -193,10 +195,10 @@ bool SourceContext::MergePartialFromCodedStream(
         if (tag == 10) {
           DO_(::google::protobuf::internal::WireFormatLite::ReadString(
                 input, this->mutable_file_name()));
-          ::google::protobuf::internal::WireFormat::VerifyUTF8StringNamedField(
+          DO_(::google::protobuf::internal::WireFormatLite::VerifyUtf8String(
             this->file_name().data(), this->file_name().length(),
-            ::google::protobuf::internal::WireFormat::PARSE,
-            "google.protobuf.SourceContext.file_name");
+            ::google::protobuf::internal::WireFormatLite::PARSE,
+            "google.protobuf.SourceContext.file_name"));
         } else {
           goto handle_unusual;
         }
@@ -230,9 +232,9 @@ void SourceContext::SerializeWithCachedSizes(
   // @@protoc_insertion_point(serialize_start:google.protobuf.SourceContext)
   // optional string file_name = 1;
   if (this->file_name().size() > 0) {
-    ::google::protobuf::internal::WireFormat::VerifyUTF8StringNamedField(
+    ::google::protobuf::internal::WireFormatLite::VerifyUtf8String(
       this->file_name().data(), this->file_name().length(),
-      ::google::protobuf::internal::WireFormat::SERIALIZE,
+      ::google::protobuf::internal::WireFormatLite::SERIALIZE,
       "google.protobuf.SourceContext.file_name");
     ::google::protobuf::internal::WireFormatLite::WriteStringMaybeAliased(
       1, this->file_name(), output);
@@ -246,9 +248,9 @@ void SourceContext::SerializeWithCachedSizes(
   // @@protoc_insertion_point(serialize_to_array_start:google.protobuf.SourceContext)
   // optional string file_name = 1;
   if (this->file_name().size() > 0) {
-    ::google::protobuf::internal::WireFormat::VerifyUTF8StringNamedField(
+    ::google::protobuf::internal::WireFormatLite::VerifyUtf8String(
       this->file_name().data(), this->file_name().length(),
-      ::google::protobuf::internal::WireFormat::SERIALIZE,
+      ::google::protobuf::internal::WireFormatLite::SERIALIZE,
       "google.protobuf.SourceContext.file_name");
     target =
       ::google::protobuf::internal::WireFormatLite::WriteStringToArray(

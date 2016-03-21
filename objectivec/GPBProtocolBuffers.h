@@ -41,4 +41,17 @@
 #import "GPBUnknownField.h"
 #import "GPBUnknownFieldSet.h"
 #import "GPBUtilities.h"
+#import "GPBWellKnownTypes.h"
 #import "GPBWireFormat.h"
+
+// Well-known proto types
+#import "google/protobuf/Any.pbobjc.h"
+#import "google/protobuf/Api.pbobjc.h"
+#import "google/protobuf/Duration.pbobjc.h"
+#import "google/protobuf/Empty.pbobjc.h"
+#import "google/protobuf/FieldMask.pbobjc.h"
+#import "google/protobuf/SourceContext.pbobjc.h"
+#import "google/protobuf/Struct.pbobjc.h"
+#import "google/protobuf/Timestamp.pbobjc.h"
+#import "google/protobuf/Type.pbobjc.h"
+#import "google/protobuf/Wrappers.pbobjc.h"

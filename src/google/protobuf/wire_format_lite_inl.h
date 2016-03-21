@@ -43,6 +43,7 @@
 
 #include <string>
 #include <google/protobuf/stubs/common.h>
+#include <google/protobuf/stubs/logging.h>
 #include <google/protobuf/message_lite.h>
 #include <google/protobuf/repeated_field.h>
 #include <google/protobuf/wire_format_lite.h>
@@ -411,12 +412,12 @@ inline bool WireFormatLite::ReadPackedPrimitive<                               \
       CPPTYPE, WireFormatLite::DECLARED_TYPE>(input, values);                  \
 }
 
-READ_REPEATED_PACKED_FIXED_SIZE_PRIMITIVE(uint32, TYPE_FIXED32);
-READ_REPEATED_PACKED_FIXED_SIZE_PRIMITIVE(uint64, TYPE_FIXED64);
-READ_REPEATED_PACKED_FIXED_SIZE_PRIMITIVE(int32, TYPE_SFIXED32);
-READ_REPEATED_PACKED_FIXED_SIZE_PRIMITIVE(int64, TYPE_SFIXED64);
-READ_REPEATED_PACKED_FIXED_SIZE_PRIMITIVE(float, TYPE_FLOAT);
-READ_REPEATED_PACKED_FIXED_SIZE_PRIMITIVE(double, TYPE_DOUBLE);
+READ_REPEATED_PACKED_FIXED_SIZE_PRIMITIVE(uint32, TYPE_FIXED32)
+READ_REPEATED_PACKED_FIXED_SIZE_PRIMITIVE(uint64, TYPE_FIXED64)
+READ_REPEATED_PACKED_FIXED_SIZE_PRIMITIVE(int32, TYPE_SFIXED32)
+READ_REPEATED_PACKED_FIXED_SIZE_PRIMITIVE(int64, TYPE_SFIXED64)
+READ_REPEATED_PACKED_FIXED_SIZE_PRIMITIVE(float, TYPE_FLOAT)
+READ_REPEATED_PACKED_FIXED_SIZE_PRIMITIVE(double, TYPE_DOUBLE)
 
 #undef READ_REPEATED_PACKED_FIXED_SIZE_PRIMITIVE
 
@@ -834,12 +835,14 @@ inline int WireFormatLite::EnumSize(int value) {
 }
 
 inline int WireFormatLite::StringSize(const string& value) {
-  return io::CodedOutputStream::VarintSize32(value.size()) +
-         value.size();
+  return static_cast<int>(
+      io::CodedOutputStream::VarintSize32(static_cast<uint32>(value.size())) +
+      value.size());
 }
 inline int WireFormatLite::BytesSize(const string& value) {
-  return io::CodedOutputStream::VarintSize32(value.size()) +
-         value.size();
+  return static_cast<int>(
+      io::CodedOutputStream::VarintSize32(static_cast<uint32>(value.size())) +
+      value.size());
 }
 
 

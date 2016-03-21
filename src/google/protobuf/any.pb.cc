@@ -2,11 +2,12 @@
 // source: google/protobuf/any.proto
 
 #define INTERNAL_SUPPRESS_PROTOBUF_FIELD_DEPRECATION
-#include "google/protobuf/any.pb.h"
+#include <google/protobuf/any.pb.h>
 
 #include <algorithm>
 
 #include <google/protobuf/stubs/common.h>
+#include <google/protobuf/stubs/port.h>
 #include <google/protobuf/stubs/once.h>
 #include <google/protobuf/io/coded_stream.h>
 #include <google/protobuf/wire_format_lite_inl.h>
@@ -82,9 +83,9 @@ void protobuf_AddDesc_google_2fprotobuf_2fany_2eproto() {
   ::google::protobuf::DescriptorPool::InternalAddGeneratedFile(
     "\n\031google/protobuf/any.proto\022\017google.prot"
     "obuf\"&\n\003Any\022\020\n\010type_url\030\001 \001(\t\022\r\n\005value\030\002"
-    " \001(\014BC\n\023com.google.protobufB\010AnyProtoP\001\240"
-    "\001\001\242\002\003GPB\252\002\026Google.ProtocolBuffersb\006proto"
-    "3", 161);
+    " \001(\014BK\n\023com.google.protobufB\010AnyProtoP\001\240"
+    "\001\001\242\002\003GPB\252\002\036Google.Protobuf.WellKnownType"
+    "sb\006proto3", 169);
   ::google::protobuf::MessageFactory::InternalRegisterGeneratedFile(
     "google/protobuf/any.proto", &protobuf_RegisterTypes);
   Any::default_instance_ = new Any();
@@ -119,10 +120,10 @@ bool Any::UnpackTo(::google::protobuf::Message* message) const {
   return _any_metadata_.UnpackTo(message);
 }
 
-#ifndef _MSC_VER
+#if !defined(_MSC_VER) || _MSC_VER >= 1900
 const int Any::kTypeUrlFieldNumber;
 const int Any::kValueFieldNumber;
-#endif  // !_MSC_VER
+#endif  // !defined(_MSC_VER) || _MSC_VER >= 1900
 
 Any::Any()
   : ::google::protobuf::Message(), _internal_metadata_(NULL), _any_metadata_(&type_url_, &value_) {
@@ -208,10 +209,10 @@ bool Any::MergePartialFromCodedStream(
         if (tag == 10) {
           DO_(::google::protobuf::internal::WireFormatLite::ReadString(
                 input, this->mutable_type_url()));
-          ::google::protobuf::internal::WireFormat::VerifyUTF8StringNamedField(
+          DO_(::google::protobuf::internal::WireFormatLite::VerifyUtf8String(
             this->type_url().data(), this->type_url().length(),
-            ::google::protobuf::internal::WireFormat::PARSE,
-            "google.protobuf.Any.type_url");
+            ::google::protobuf::internal::WireFormatLite::PARSE,
+            "google.protobuf.Any.type_url"));
         } else {
           goto handle_unusual;
         }
@@ -258,9 +259,9 @@ void Any::SerializeWithCachedSizes(
   // @@protoc_insertion_point(serialize_start:google.protobuf.Any)
   // optional string type_url = 1;
   if (this->type_url().size() > 0) {
-    ::google::protobuf::internal::WireFormat::VerifyUTF8StringNamedField(
+    ::google::protobuf::internal::WireFormatLite::VerifyUtf8String(
       this->type_url().data(), this->type_url().length(),
-      ::google::protobuf::internal::WireFormat::SERIALIZE,
+      ::google::protobuf::internal::WireFormatLite::SERIALIZE,
       "google.protobuf.Any.type_url");
     ::google::protobuf::internal::WireFormatLite::WriteStringMaybeAliased(
       1, this->type_url(), output);
@@ -280,9 +281,9 @@ void Any::SerializeWithCachedSizes(
   // @@protoc_insertion_point(serialize_to_array_start:google.protobuf.Any)
   // optional string type_url = 1;
   if (this->type_url().size() > 0) {
-    ::google::protobuf::internal::WireFormat::VerifyUTF8StringNamedField(
+    ::google::protobuf::internal::WireFormatLite::VerifyUtf8String(
       this->type_url().data(), this->type_url().length(),
-      ::google::protobuf::internal::WireFormat::SERIALIZE,
+      ::google::protobuf::internal::WireFormatLite::SERIALIZE,
       "google.protobuf.Any.type_url");
     target =
       ::google::protobuf::internal::WireFormatLite::WriteStringToArray(

@@ -98,7 +98,8 @@ class LIBPROTOBUF_EXPORT DataPiece {
 
   static DataPiece NullData() { return DataPiece(TYPE_NULL, 0); }
 
-  virtual ~DataPiece() {}
+  virtual ~DataPiece() {
+  }
 
   // Accessors
   Type type() const { return type_; }
@@ -193,13 +194,13 @@ class LIBPROTOBUF_EXPORT DataPiece {
 
   // Stored piece of data.
   union {
-    const int32 i32_;
-    const int64 i64_;
-    const uint32 u32_;
-    const uint64 u64_;
-    const double double_;
-    const float float_;
-    const bool bool_;
+    int32 i32_;
+    int64 i64_;
+    uint32 u32_;
+    uint64 u64_;
+    double double_;
+    float float_;
+    bool bool_;
     StringPiecePod str_;
   };
 };

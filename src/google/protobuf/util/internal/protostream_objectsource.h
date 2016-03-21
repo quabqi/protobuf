@@ -46,7 +46,6 @@
 #include <google/protobuf/stubs/statusor.h>
 
 
-
 namespace google {
 namespace protobuf {
 class Field;
@@ -61,7 +60,10 @@ namespace converter {
 class TypeInfo;
 
 // An ObjectSource that can parse a stream of bytes as a protocol buffer.
-// This implementation uses a tech Type for tag lookup.
+// Its WriteTo() method can be given an ObjectWriter.
+// This implementation uses a google.protobuf.Type for tag and name lookup.
+// The field names are converted into lower camel-case when writing to the
+// ObjectWriter.
 //
 // Sample usage: (suppose input is: string proto)
 //   ArrayInputStream arr_stream(proto.data(), proto.size());
@@ -93,7 +95,7 @@ class LIBPROTOBUF_EXPORT ProtoStreamObjectSource : public ObjectSource {
 
  private:
   ProtoStreamObjectSource(google::protobuf::io::CodedInputStream* stream,
-                          TypeInfo* typeinfo,
+                          const TypeInfo* typeinfo,
                           const google::protobuf::Type& type);
   // Function that renders a well known type with a modified behavior.
   typedef util::Status (*TypeRenderer)(const ProtoStreamObjectSource*,
@@ -120,19 +122,11 @@ class LIBPROTOBUF_EXPORT ProtoStreamObjectSource : public ObjectSource {
                                      StringPiece name, uint32 list_tag,
                                      ObjectWriter* ow) const;
 
-  // Renders an entry in a map, advancing stream pointers appropriately.
-  util::Status RenderMapEntry(const google::protobuf::Type* type,
-                                ObjectWriter* ow) const;
-
   // Renders a packed repeating field. A packed field is stored as:
   // {tag length item1 item2 item3} instead of the less efficient
   // {tag item1 tag item2 tag item3}.
   util::Status RenderPacked(const google::protobuf::Field* field,
                               ObjectWriter* ow) const;
-
-  // Equivalent of RenderPacked, but for map entries.
-  util::Status RenderPackedMapEntry(const google::protobuf::Type* type,
-                                      ObjectWriter* ow) const;
 
   // Renders a google.protobuf.Timestamp value to ObjectWriter
   static util::Status RenderTimestamp(const ProtoStreamObjectSource* os,
@@ -186,8 +180,7 @@ class LIBPROTOBUF_EXPORT ProtoStreamObjectSource : public ObjectSource {
 
   // Helper to render google.protobuf.Struct's ListValue fields to ObjectWriter.
   static util::Status RenderStructListValue(
-      const ProtoStreamObjectSource* os,
-      const google::protobuf::Type& type,
+      const ProtoStreamObjectSource* os, const google::protobuf::Type& type,
       StringPiece name, ObjectWriter* ow);
 
   // Render the "Any" type.
@@ -200,12 +193,21 @@ class LIBPROTOBUF_EXPORT ProtoStreamObjectSource : public ObjectSource {
                                         const google::protobuf::Type& type,
                                         StringPiece name, ObjectWriter* ow);
 
-  static hash_map<string, TypeRenderer>* CreateRendererMap();
+  static hash_map<string, TypeRenderer>* renderers_;
+  static void InitRendererMap();
+  static void DeleteRendererMap();
   static TypeRenderer* FindTypeRenderer(const string& type_url);
 
   // Renders a field value to the ObjectWriter.
   util::Status RenderField(const google::protobuf::Field* field,
                              StringPiece field_name, ObjectWriter* ow) const;
+
+  // Same as above but renders all non-message field types. Callers don't call
+  // this function directly. They just use RenderField.
+  util::Status RenderNonMessageField(const google::protobuf::Field* field,
+                                       StringPiece field_name,
+                                       ObjectWriter* ow) const;
+
 
   // Reads field value according to Field spec in 'field' and returns the read
   // value as string. This only works for primitive datatypes (no message
@@ -226,13 +228,14 @@ class LIBPROTOBUF_EXPORT ProtoStreamObjectSource : public ObjectSource {
 
   // Type information for all the types used in the descriptor. Used to find
   // google::protobuf::Type of nested messages/enums.
-  TypeInfo* typeinfo_;
+  const TypeInfo* typeinfo_;
   // Whether this class owns the typeinfo_ object. If true the typeinfo_ object
   // should be deleted in the destructor.
   bool own_typeinfo_;
 
   // google::protobuf::Type of the message source.
   const google::protobuf::Type& type_;
+
 
   GOOGLE_DISALLOW_IMPLICIT_CONSTRUCTORS(ProtoStreamObjectSource);
 };

@@ -35,6 +35,7 @@
 #include <map>
 #include <string>
 
+#include <google/protobuf/stubs/logging.h>
 #include <google/protobuf/stubs/common.h>
 #include <google/protobuf/compiler/java/java_context.h>
 #include <google/protobuf/compiler/java/java_doc_comment.h>
@@ -298,7 +299,7 @@ GenerateParsingCode(io::Printer* printer) const {
       "if (value == null) {\n");
     if (PreserveUnknownFields(descriptor_->containing_type())) {
       printer->Print(variables_,
-        "  unknownFields.mergeVarintField($number$, rawValue);\n");
+        "  super.mergeVarintField($number$, rawValue);\n");
     }
     printer->Print(variables_,
       "} else {\n"
@@ -491,7 +492,7 @@ GenerateParsingCode(io::Printer* printer) const {
       "if (value == null) {\n");
     if (PreserveUnknownFields(descriptor_->containing_type())) {
       printer->Print(variables_,
-        "  unknownFields.mergeVarintField($number$, rawValue);\n");
+        "  super.mergeVarintField($number$, rawValue);\n");
     }
     printer->Print(variables_,
       "} else {\n"
@@ -595,9 +596,7 @@ GenerateInterfaceMembers(io::Printer* printer) const {
 void RepeatedImmutableEnumFieldLiteGenerator::
 GenerateMembers(io::Printer* printer) const {
   printer->Print(variables_,
-    // TODO(dweis): Switch to IntList?
-    "private com.google.protobuf.Internal.ProtobufList<\n"
-    "    java.lang.Integer> $name$_;\n"
+    "private com.google.protobuf.Internal.IntList $name$_;\n"
     "private static final com.google.protobuf.Internal.ListAdapter.Converter<\n"
     "    java.lang.Integer, $type$> $name$_converter_ =\n"
     "        new com.google.protobuf.Internal.ListAdapter.Converter<\n"
@@ -622,7 +621,7 @@ GenerateMembers(io::Printer* printer) const {
   WriteFieldDocComment(printer, descriptor_);
   printer->Print(variables_,
     "$deprecation$public $type$ get$capitalized_name$(int index) {\n"
-    "  return $name$_converter_.convert($name$_.get(index));\n"
+    "  return $name$_converter_.convert($name$_.getInt(index));\n"
     "}\n");
   if (SupportUnknownEnumValue(descriptor_->file())) {
     WriteFieldDocComment(printer, descriptor_);
@@ -634,7 +633,7 @@ GenerateMembers(io::Printer* printer) const {
     WriteFieldDocComment(printer, descriptor_);
     printer->Print(variables_,
       "$deprecation$public int get$capitalized_name$Value(int index) {\n"
-      "  return $name$_.get(index);\n"
+      "  return $name$_.getInt(index);\n"
       "}\n");
   }
 
@@ -648,7 +647,7 @@ GenerateMembers(io::Printer* printer) const {
   printer->Print(variables_,
     "private void ensure$capitalized_name$IsMutable() {\n"
     "  if (!$is_mutable$) {\n"
-    "    $name$_ = newProtobufList($name$_);\n"
+    "    $name$_ = newIntList($name$_);\n"
     "  }\n"
     "}\n");
   WriteFieldDocComment(printer, descriptor_);
@@ -659,7 +658,7 @@ GenerateMembers(io::Printer* printer) const {
     "    throw new NullPointerException();\n"
     "  }\n"
     "  ensure$capitalized_name$IsMutable();\n"
-    "  $name$_.set(index, value.getNumber());\n"
+    "  $name$_.setInt(index, value.getNumber());\n"
     "}\n");
   WriteFieldDocComment(printer, descriptor_);
   printer->Print(variables_,
@@ -668,7 +667,7 @@ GenerateMembers(io::Printer* printer) const {
     "    throw new NullPointerException();\n"
     "  }\n"
     "  ensure$capitalized_name$IsMutable();\n"
-    "  $name$_.add(value.getNumber());\n"
+    "  $name$_.addInt(value.getNumber());\n"
     "}\n");
   WriteFieldDocComment(printer, descriptor_);
   printer->Print(variables_,
@@ -676,13 +675,13 @@ GenerateMembers(io::Printer* printer) const {
     "    java.lang.Iterable<? extends $type$> values) {\n"
     "  ensure$capitalized_name$IsMutable();\n"
     "  for ($type$ value : values) {\n"
-    "    $name$_.add(value.getNumber());\n"
+    "    $name$_.addInt(value.getNumber());\n"
     "  }\n"
     "}\n");
   WriteFieldDocComment(printer, descriptor_);
   printer->Print(variables_,
     "private void clear$capitalized_name$() {\n"
-    "  $name$_ = emptyProtobufList();\n"
+    "  $name$_ = emptyIntList();\n"
     "}\n");
 
   if (SupportUnknownEnumValue(descriptor_->file())) {
@@ -691,13 +690,13 @@ GenerateMembers(io::Printer* printer) const {
       "private void set$capitalized_name$Value(\n"
       "    int index, int value) {\n"
       "  ensure$capitalized_name$IsMutable();\n"
-      "  $name$_.set(index, value);\n"
+      "  $name$_.setInt(index, value);\n"
       "}\n");
     WriteFieldDocComment(printer, descriptor_);
     printer->Print(variables_,
       "private void add$capitalized_name$Value(int value) {\n"
       "  ensure$capitalized_name$IsMutable();\n"
-      "  $name$_.add(value);\n"
+      "  $name$_.addInt(value);\n"
       "}\n");
     WriteFieldDocComment(printer, descriptor_);
     printer->Print(variables_,
@@ -705,7 +704,7 @@ GenerateMembers(io::Printer* printer) const {
       "    java.lang.Iterable<java.lang.Integer> values) {\n"
       "  ensure$capitalized_name$IsMutable();\n"
       "  for (int value : values) {\n"
-      "    $name$_.add(value);\n"
+      "    $name$_.addInt(value);\n"
       "  }\n"
       "}\n");
   }
@@ -804,7 +803,7 @@ GenerateFieldBuilderInitializationCode(io::Printer* printer)  const {
 
 void RepeatedImmutableEnumFieldLiteGenerator::
 GenerateInitializationCode(io::Printer* printer) const {
-  printer->Print(variables_, "$name$_ = emptyProtobufList();\n");
+  printer->Print(variables_, "$name$_ = emptyIntList();\n");
 }
 
 void RepeatedImmutableEnumFieldLiteGenerator::
@@ -839,9 +838,9 @@ GenerateParsingCode(io::Printer* printer) const {
     printer->Print(variables_,
       "int rawValue = input.readEnum();\n"
       "if (!$is_mutable$) {\n"
-      "  $name$_ = newProtobufList();\n"
+      "  $name$_ = newIntList();\n"
       "}\n"
-      "$name$_.add(rawValue);\n");
+      "$name$_.addInt(rawValue);\n");
   } else {
     printer->Print(variables_,
       "int rawValue = input.readEnum();\n"
@@ -849,14 +848,14 @@ GenerateParsingCode(io::Printer* printer) const {
         "if (value == null) {\n");
     if (PreserveUnknownFields(descriptor_->containing_type())) {
       printer->Print(variables_,
-        "  unknownFields.mergeVarintField($number$, rawValue);\n");
+        "  super.mergeVarintField($number$, rawValue);\n");
     }
     printer->Print(variables_,
       "} else {\n"
       "  if (!$is_mutable$) {\n"
-      "    $name$_ = newProtobufList();\n"
+      "    $name$_ = newIntList();\n"
       "  }\n"
-      "  $name$_.add(rawValue);\n"
+      "  $name$_.addInt(rawValue);\n"
       "}\n");
   }
 }
@@ -896,12 +895,12 @@ GenerateSerializationCode(io::Printer* printer) const {
       "  output.writeRawVarint32($name$MemoizedSerializedSize);\n"
       "}\n"
       "for (int i = 0; i < $name$_.size(); i++) {\n"
-      "  output.writeEnumNoTag($name$_.get(i));\n"
+      "  output.writeEnumNoTag($name$_.getInt(i));\n"
       "}\n");
   } else {
     printer->Print(variables_,
       "for (int i = 0; i < $name$_.size(); i++) {\n"
-      "  output.writeEnum($number$, $name$_.get(i));\n"
+      "  output.writeEnum($number$, $name$_.getInt(i));\n"
       "}\n");
   }
 }
@@ -916,7 +915,7 @@ GenerateSerializedSizeCode(io::Printer* printer) const {
   printer->Print(variables_,
     "for (int i = 0; i < $name$_.size(); i++) {\n"
     "  dataSize += com.google.protobuf.CodedOutputStream\n"
-    "    .computeEnumSizeNoTag($name$_.get(i));\n"
+    "    .computeEnumSizeNoTag($name$_.getInt(i));\n"
     "}\n");
   printer->Print(
     "size += dataSize;\n");

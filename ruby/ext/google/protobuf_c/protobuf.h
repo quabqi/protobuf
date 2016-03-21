@@ -112,6 +112,7 @@ struct Descriptor {
   VALUE klass;  // begins as nil
   const upb_handlers* fill_handlers;
   const upb_pbdecodermethod* fill_method;
+  const upb_json_parsermethod* json_fill_method;
   const upb_handlers* pb_serialize_handlers;
   const upb_handlers* json_serialize_handlers;
   // Handlers hold type class references for sub-message fields directly in some
@@ -160,6 +161,9 @@ extern VALUE cMessageBuilderContext;
 extern VALUE cOneofBuilderContext;
 extern VALUE cEnumBuilderContext;
 extern VALUE cBuilder;
+
+extern VALUE cError;
+extern VALUE cParseError;
 
 // We forward-declare all of the Ruby method implementations here because we
 // sometimes call the methods directly across .c files, rather than going

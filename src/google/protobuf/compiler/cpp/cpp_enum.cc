@@ -32,7 +32,6 @@
 //  Based on original Protocol Buffers design by
 //  Sanjay Ghemawat, Jeff Dean, and others.
 
-#include <set>
 #include <map>
 
 #include <google/protobuf/compiler/cpp/cpp_enum.h>
@@ -70,14 +69,11 @@ EnumGenerator::EnumGenerator(const EnumDescriptor* descriptor,
 
 EnumGenerator::~EnumGenerator() {}
 
-void EnumGenerator::GenerateForwardDeclaration(io::Printer* printer) {
+void EnumGenerator::FillForwardDeclaration(set<string>* enum_names) {
   if (!options_.proto_h) {
     return;
   }
-  map<string, string> vars;
-  vars["classname"] = classname_;
-  printer->Print(vars, "enum $classname$ : int;\n");
-  printer->Print(vars, "bool $classname$_IsValid(int value);\n");
+  enum_names->insert(classname_);
 }
 
 void EnumGenerator::GenerateDefinition(io::Printer* printer) {
@@ -182,12 +178,13 @@ void EnumGenerator::GenerateSymbolImports(io::Printer* printer) {
   map<string, string> vars;
   vars["nested_name"] = descriptor_->name();
   vars["classname"] = classname_;
+  vars["constexpr"] = options_.proto_h ? "constexpr " : "";
   printer->Print(vars, "typedef $classname$ $nested_name$;\n");
 
   for (int j = 0; j < descriptor_->value_count(); j++) {
     vars["tag"] = EnumValueName(descriptor_->value(j));
     printer->Print(vars,
-      "static const $nested_name$ $tag$ = $classname$_$tag$;\n");
+      "static $constexpr$const $nested_name$ $tag$ = $classname$_$tag$;\n");
   }
 
   printer->Print(vars,
@@ -241,6 +238,7 @@ void EnumGenerator::GenerateDescriptorInitializer(
 void EnumGenerator::GenerateMethods(io::Printer* printer) {
   map<string, string> vars;
   vars["classname"] = classname_;
+  vars["constexpr"] = options_.proto_h ? "constexpr " : "";
 
   if (HasDescriptorMethods(descriptor_->file())) {
     printer->Print(vars,
@@ -282,16 +280,16 @@ void EnumGenerator::GenerateMethods(io::Printer* printer) {
   if (descriptor_->containing_type() != NULL) {
     // We need to "define" the static constants which were declared in the
     // header, to give the linker a place to put them.  Or at least the C++
-    // standard says we have to.  MSVC actually insists tha we do _not_ define
-    // them again in the .cc file.
-    printer->Print("#ifndef _MSC_VER\n");
+    // standard says we have to.  MSVC actually insists that we do _not_ define
+    // them again in the .cc file, prior to VC++ 2015.
+    printer->Print("#if !defined(_MSC_VER) || _MSC_VER >= 1900\n");
 
     vars["parent"] = ClassName(descriptor_->containing_type(), false);
     vars["nested_name"] = descriptor_->name();
     for (int i = 0; i < descriptor_->value_count(); i++) {
       vars["value"] = EnumValueName(descriptor_->value(i));
       printer->Print(vars,
-        "const $classname$ $parent$::$value$;\n");
+        "$constexpr$const $classname$ $parent$::$value$;\n");
     }
     printer->Print(vars,
       "const $classname$ $parent$::$nested_name$_MIN;\n"
@@ -301,7 +299,7 @@ void EnumGenerator::GenerateMethods(io::Printer* printer) {
         "const int $parent$::$nested_name$_ARRAYSIZE;\n");
     }
 
-    printer->Print("#endif  // _MSC_VER\n");
+    printer->Print("#endif  // !defined(_MSC_VER) || _MSC_VER >= 1900\n");
   }
 }
 

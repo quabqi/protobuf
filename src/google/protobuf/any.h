@@ -34,9 +34,9 @@
 #include <string>
 
 #include <google/protobuf/stubs/common.h>
-#include <google/protobuf/arenastring.h>
 #include <google/protobuf/descriptor.h>
 #include <google/protobuf/message.h>
+#include <google/protobuf/arenastring.h>
 
 namespace google {
 namespace protobuf {
@@ -70,11 +70,12 @@ class LIBPROTOBUF_EXPORT AnyMetadata {
 
 extern const char kAnyFullTypeName[];          // "google.protobuf.Any".
 extern const char kTypeGoogleApisComPrefix[];  // "type.googleapis.com/".
+extern const char kTypeGoogleProdComPrefix[];  // "type.googleprod.com/".
 
 // Get the proto type name from Any::type_url value. For example, passing
 // "type.googleapis.com/rpc.QueryOrigin" will return "rpc.QueryOrigin" in
 // *full_type_name. Returns false if type_url does not start with
-// "type.googleapis.com".
+// "type.googleapis.com" or "type.googleprod.com".
 bool ParseAnyTypeUrl(const string& type_url, string* full_type_name);
 
 // See if message is of type google.protobuf.Any, if so, return the descriptors
