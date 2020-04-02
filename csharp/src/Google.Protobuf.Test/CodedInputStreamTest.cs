@@ -33,6 +33,7 @@
 using System;
 using System.IO;
 using Google.Protobuf.TestProtos;
+using Proto2 = Google.Protobuf.TestProtos.Proto2;
 using NUnit.Framework;
 
 namespace Google.Protobuf
@@ -284,6 +285,20 @@ namespace Google.Protobuf
             Assert.Throws<InvalidProtocolBufferException>(() => input.ReadBytes());
         }
 
+        // Representations of a tag for field 0 with various wire types
+        [Test]
+        [TestCase(0)]
+        [TestCase(1)]
+        [TestCase(2)]
+        [TestCase(3)]
+        [TestCase(4)]
+        [TestCase(5)]
+        public void ReadTag_ZeroFieldRejected(byte tag)
+        {
+            CodedInputStream cis = new CodedInputStream(new byte[] { tag });
+            Assert.Throws<InvalidProtocolBufferException>(() => cis.ReadTag());
+        }
+
         internal static TestRecursiveMessage MakeRecursiveMessage(int depth)
         {
             if (depth == 0)
@@ -313,15 +328,75 @@ namespace Google.Protobuf
         [Test]
         public void MaliciousRecursion()
         {
-            ByteString data64 = MakeRecursiveMessage(64).ToByteString();
-            ByteString data65 = MakeRecursiveMessage(65).ToByteString();
+            ByteString atRecursiveLimit = MakeRecursiveMessage(CodedInputStream.DefaultRecursionLimit).ToByteString();
+            ByteString beyondRecursiveLimit = MakeRecursiveMessage(CodedInputStream.DefaultRecursionLimit + 1).ToByteString();
 
-            AssertMessageDepth(TestRecursiveMessage.Parser.ParseFrom(data64), 64);
+            AssertMessageDepth(TestRecursiveMessage.Parser.ParseFrom(atRecursiveLimit), CodedInputStream.DefaultRecursionLimit);
 
-            Assert.Throws<InvalidProtocolBufferException>(() => TestRecursiveMessage.Parser.ParseFrom(data65));
+            Assert.Throws<InvalidProtocolBufferException>(() => TestRecursiveMessage.Parser.ParseFrom(beyondRecursiveLimit));
 
-            CodedInputStream input = CodedInputStream.CreateWithLimits(new MemoryStream(data64.ToByteArray()), 1000000, 63);
+            CodedInputStream input = CodedInputStream.CreateWithLimits(new MemoryStream(atRecursiveLimit.ToByteArray()), 1000000, CodedInputStream.DefaultRecursionLimit - 1);
             Assert.Throws<InvalidProtocolBufferException>(() => TestRecursiveMessage.Parser.ParseFrom(input));
+        }
+        
+        private static byte[] MakeMaliciousRecursionUnknownFieldsPayload(int recursionDepth)
+        {
+            // generate recursively nested groups that will be parsed as unknown fields
+            int unknownFieldNumber = 14;  // an unused field number
+            MemoryStream ms = new MemoryStream();
+            CodedOutputStream output = new CodedOutputStream(ms);
+            for (int i = 0; i < recursionDepth; i++)
+            {
+                output.WriteTag(WireFormat.MakeTag(unknownFieldNumber, WireFormat.WireType.StartGroup));
+            }
+            for (int i = 0; i < recursionDepth; i++)
+            {
+                output.WriteTag(WireFormat.MakeTag(unknownFieldNumber, WireFormat.WireType.EndGroup));
+            }
+            output.Flush();
+            return ms.ToArray();
+        }
+
+        [Test]
+        public void MaliciousRecursion_UnknownFields()
+        {
+            byte[] payloadAtRecursiveLimit = MakeMaliciousRecursionUnknownFieldsPayload(CodedInputStream.DefaultRecursionLimit);
+            byte[] payloadBeyondRecursiveLimit = MakeMaliciousRecursionUnknownFieldsPayload(CodedInputStream.DefaultRecursionLimit + 1);
+            
+            Assert.DoesNotThrow(() => TestRecursiveMessage.Parser.ParseFrom(payloadAtRecursiveLimit));
+            Assert.Throws<InvalidProtocolBufferException>(() => TestRecursiveMessage.Parser.ParseFrom(payloadBeyondRecursiveLimit));
+        }
+
+        [Test]
+        public void ReadGroup_WrongEndGroupTag()
+        {
+            int groupFieldNumber = Proto2.TestAllTypes.OptionalGroupFieldNumber;
+
+            // write Proto2.TestAllTypes with "optional_group" set, but use wrong EndGroup closing tag
+            MemoryStream ms = new MemoryStream();
+            CodedOutputStream output = new CodedOutputStream(ms);
+            output.WriteTag(WireFormat.MakeTag(groupFieldNumber, WireFormat.WireType.StartGroup));
+            output.WriteGroup(new Proto2.TestAllTypes.Types.OptionalGroup { A = 12345 });
+            // end group with different field number
+            output.WriteTag(WireFormat.MakeTag(groupFieldNumber + 1, WireFormat.WireType.EndGroup));
+            output.Flush();
+            var payload = ms.ToArray();
+
+            Assert.Throws<InvalidProtocolBufferException>(() => Proto2.TestAllTypes.Parser.ParseFrom(payload));
+        }
+
+        [Test]
+        public void ReadGroup_UnknownFields_WrongEndGroupTag()
+        {
+            MemoryStream ms = new MemoryStream();
+            CodedOutputStream output = new CodedOutputStream(ms);
+            output.WriteTag(WireFormat.MakeTag(14, WireFormat.WireType.StartGroup));
+            // end group with different field number
+            output.WriteTag(WireFormat.MakeTag(15, WireFormat.WireType.EndGroup));
+            output.Flush();
+            var payload = ms.ToArray();
+
+            Assert.Throws<InvalidProtocolBufferException>(() => TestRecursiveMessage.Parser.ParseFrom(payload));
         }
 
         [Test]
@@ -357,6 +432,42 @@ namespace Google.Protobuf
             Assert.AreEqual(tag, input.ReadTag());
             string text = input.ReadString();
             Assert.AreEqual('\ufffd', text[0]);
+        }
+
+        [Test]
+        public void ReadNegativeSizedStringThrowsInvalidProtocolBufferException()
+        {
+            MemoryStream ms = new MemoryStream();
+            CodedOutputStream output = new CodedOutputStream(ms);
+
+            uint tag = WireFormat.MakeTag(1, WireFormat.WireType.LengthDelimited);
+            output.WriteRawVarint32(tag);
+            output.WriteLength(-1);
+            output.Flush();
+            ms.Position = 0;
+
+            CodedInputStream input = new CodedInputStream(ms);
+
+            Assert.AreEqual(tag, input.ReadTag());
+            Assert.Throws<InvalidProtocolBufferException>(() => input.ReadString());
+        }
+
+        [Test]
+        public void ReadNegativeSizedBytesThrowsInvalidProtocolBufferException()
+        {
+            MemoryStream ms = new MemoryStream();
+            CodedOutputStream output = new CodedOutputStream(ms);
+
+            uint tag = WireFormat.MakeTag(1, WireFormat.WireType.LengthDelimited);
+            output.WriteRawVarint32(tag);
+            output.WriteLength(-1);
+            output.Flush();
+            ms.Position = 0;
+
+            CodedInputStream input = new CodedInputStream(ms);
+
+            Assert.AreEqual(tag, input.ReadTag());
+            Assert.Throws<InvalidProtocolBufferException>(() => input.ReadBytes());
         }
 
         /// <summary>
@@ -403,7 +514,7 @@ namespace Google.Protobuf
                 output.Flush();
 
                 ms.Position = 0;
-                CodedInputStream input = new CodedInputStream(ms, new byte[ms.Length / 2], 0, 0);
+                CodedInputStream input = new CodedInputStream(ms, new byte[ms.Length / 2], 0, 0, false);
 
                 uint tag = input.ReadTag();
                 Assert.AreEqual(1, WireFormat.GetTagFieldNumber(tag));
@@ -593,6 +704,96 @@ namespace Google.Protobuf
             {
             }
             Assert.IsTrue(memoryStream.CanRead); // We left the stream open
+        }
+
+        [Test]
+        public void Dispose_FromByteArray()
+        {
+            var stream = new CodedInputStream(new byte[10]);
+            stream.Dispose();
+        }
+
+        [Test]
+        public void TestParseMessagesCloseTo2G()
+        {
+            byte[] serializedMessage = GenerateBigSerializedMessage();
+            // How many of these big messages do we need to take us near our 2GB limit?
+            int count = Int32.MaxValue / serializedMessage.Length;
+            // Now make a MemoryStream that will fake a near-2GB stream of messages by returning
+            // our big serialized message 'count' times.
+            using (RepeatingMemoryStream stream = new RepeatingMemoryStream(serializedMessage, count))
+            {
+                Assert.DoesNotThrow(()=>TestAllTypes.Parser.ParseFrom(stream));
+            }
+        }
+
+        [Test]
+        public void TestParseMessagesOver2G()
+        {
+            byte[] serializedMessage = GenerateBigSerializedMessage();
+            // How many of these big messages do we need to take us near our 2GB limit?
+            int count = Int32.MaxValue / serializedMessage.Length;
+            // Now add one to take us over the 2GB limit
+            count++;
+            // Now make a MemoryStream that will fake a near-2GB stream of messages by returning
+            // our big serialized message 'count' times.
+            using (RepeatingMemoryStream stream = new RepeatingMemoryStream(serializedMessage, count))
+            {
+                Assert.Throws<InvalidProtocolBufferException>(() => TestAllTypes.Parser.ParseFrom(stream),
+                    "Protocol message was too large.  May be malicious.  " +
+                    "Use CodedInputStream.SetSizeLimit() to increase the size limit.");
+            }
+        }
+
+        /// <returns>A serialized big message</returns>
+        private static byte[] GenerateBigSerializedMessage()
+        {
+            byte[] value = new byte[16 * 1024 * 1024];
+            TestAllTypes message = SampleMessages.CreateFullTestAllTypes();
+            message.SingleBytes = ByteString.CopyFrom(value);
+            return message.ToByteArray();
+        }
+
+        /// <summary>
+        /// A MemoryStream that repeats a byte arrays' content a number of times.
+        /// Simulates really large input without consuming loads of memory. Used above
+        /// to test the parsing behavior when the input size exceeds 2GB or close to it.
+        /// </summary>
+        private class RepeatingMemoryStream: MemoryStream
+        {
+            private readonly byte[] bytes;
+            private readonly int maxIterations;
+            private int index = 0;
+
+            public RepeatingMemoryStream(byte[] bytes, int maxIterations)
+            {
+                this.bytes = bytes;
+                this.maxIterations = maxIterations;
+            }
+
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                if (bytes.Length == 0)
+                {
+                    return 0;
+                }
+                int numBytesCopiedTotal = 0;
+                while (numBytesCopiedTotal < count && index < maxIterations)
+                {
+                    int numBytesToCopy = Math.Min(bytes.Length - (int)Position, count);
+                    Array.Copy(bytes, (int)Position, buffer, offset, numBytesToCopy);
+                    numBytesCopiedTotal += numBytesToCopy;
+                    offset += numBytesToCopy;
+                    count -= numBytesCopiedTotal;
+                    Position += numBytesToCopy;
+                    if (Position >= bytes.Length)
+                    {
+                        Position = 0;
+                        index++;
+                    }
+                }
+                return numBytesCopiedTotal;
+            }
         }
     }
 }

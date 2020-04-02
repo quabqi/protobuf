@@ -35,7 +35,6 @@
 #include <google/protobuf/compiler/objectivec/objectivec_helpers.h>
 #include <google/protobuf/io/printer.h>
 #include <google/protobuf/wire_format.h>
-#include <google/protobuf/stubs/strutil.h>
 
 namespace google {
 namespace protobuf {
@@ -45,15 +44,15 @@ namespace objectivec {
 namespace {
 
 void SetMessageVariables(const FieldDescriptor* descriptor,
-                         map<string, string>* variables) {
+                         std::map<string, string>* variables) {
   const string& message_type = ClassName(descriptor->message_type());
+  const string& containing_class = ClassName(descriptor->containing_type());
   (*variables)["type"] = message_type;
-  (*variables)["containing_class"] = ClassName(descriptor->containing_type());
+  (*variables)["containing_class"] = containing_class;
   (*variables)["storage_type"] = message_type;
   (*variables)["group_or_message"] =
       (descriptor->type() == FieldDescriptor::TYPE_GROUP) ? "Group" : "Message";
-
-  (*variables)["dataTypeSpecific_value"] = "GPBStringifySymbol(" + message_type + ")";
+  (*variables)["dataTypeSpecific_value"] = ObjCClass(message_type);
 }
 
 }  // namespace
@@ -67,10 +66,15 @@ MessageFieldGenerator::MessageFieldGenerator(const FieldDescriptor* descriptor,
 MessageFieldGenerator::~MessageFieldGenerator() {}
 
 void MessageFieldGenerator::DetermineForwardDeclarations(
-    set<string>* fwd_decls) const {
+    std::set<string>* fwd_decls) const {
   ObjCObjFieldGenerator::DetermineForwardDeclarations(fwd_decls);
   // Class name is already in "storage_type".
   fwd_decls->insert("@class " + variable("storage_type"));
+}
+
+void MessageFieldGenerator::DetermineObjectiveCClassDefinitions(
+    std::set<string>* fwd_decls) const {
+  fwd_decls->insert(ObjCClassDeclaration(variable("storage_type")));
 }
 
 bool MessageFieldGenerator::WantsHasProperty(void) const {
@@ -95,12 +99,16 @@ RepeatedMessageFieldGenerator::RepeatedMessageFieldGenerator(
 RepeatedMessageFieldGenerator::~RepeatedMessageFieldGenerator() {}
 
 void RepeatedMessageFieldGenerator::DetermineForwardDeclarations(
-    set<string>* fwd_decls) const {
+    std::set<string>* fwd_decls) const {
   RepeatedFieldGenerator::DetermineForwardDeclarations(fwd_decls);
   // Class name is already in "storage_type".
   fwd_decls->insert("@class " + variable("storage_type"));
 }
 
+void RepeatedMessageFieldGenerator::DetermineObjectiveCClassDefinitions(
+    std::set<string>* fwd_decls) const {
+  fwd_decls->insert(ObjCClassDeclaration(variable("storage_type")));
+}
 
 }  // namespace objectivec
 }  // namespace compiler

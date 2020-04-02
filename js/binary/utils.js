@@ -38,6 +38,7 @@
 goog.provide('jspb.utils');
 
 goog.require('goog.asserts');
+goog.require('goog.crypt');
 goog.require('goog.crypt.base64');
 goog.require('goog.string');
 goog.require('jspb.BinaryConstants');
@@ -116,7 +117,7 @@ jspb.utils.splitInt64 = function(value) {
 
 
 /**
- * Convers a signed Javascript integer into zigzag format, splits it into two
+ * Converts a signed Javascript integer into zigzag format, splits it into two
  * 32-bit halves, and stores it in the temp values above.
  * @param {number} value The number to split.
  */
@@ -254,8 +255,25 @@ jspb.utils.splitFloat64 = function(value) {
     return;
   }
 
-  var exp = Math.floor(Math.log(value) / Math.LN2);
-  if (exp == 1024) exp = 1023;
+  // Compute the least significant exponent needed to represent the magnitude of
+  // the value by repeadly dividing/multiplying by 2 until the magnitude
+  // crosses 2. While tempting to use log math to find the exponent, at the
+  // bounadaries of precision, the result can be off by one.
+  var maxDoubleExponent = 1023;
+  var minDoubleExponent = -1022;
+  var x = value;
+  var exp = 0;
+  if (x >= 2) {
+    while (x >= 2 && exp < maxDoubleExponent) {
+      exp++;
+      x = x / 2;
+    }
+  } else {
+    while (x < 1 && exp > minDoubleExponent) {
+      x = x * 2;
+      exp--;
+    }
+  }
   var mant = value * Math.pow(2, -exp);
 
   var mantHigh = (mant * jspb.BinaryConstants.TWO_TO_20) & 0xFFFFF;
@@ -295,7 +313,7 @@ jspb.utils.splitHash64 = function(hash) {
  * @return {number}
  */
 jspb.utils.joinUint64 = function(bitsLow, bitsHigh) {
-  return bitsHigh * jspb.BinaryConstants.TWO_TO_32 + bitsLow;
+  return bitsHigh * jspb.BinaryConstants.TWO_TO_32 + (bitsLow >>> 0);
 };
 
 
@@ -321,6 +339,33 @@ jspb.utils.joinInt64 = function(bitsLow, bitsHigh) {
   return sign ? -result : result;
 };
 
+/**
+ * Converts split 64-bit values from standard two's complement encoding to
+ * zig-zag encoding. Invokes the provided function to produce final result.
+ *
+ * @param {number} bitsLow
+ * @param {number} bitsHigh
+ * @param {function(number, number): T} convert Conversion function to produce
+ *     the result value, takes parameters (lowBits, highBits).
+ * @return {T}
+ * @template T
+ */
+jspb.utils.toZigzag64 = function(bitsLow, bitsHigh, convert) {
+  // See
+  // https://engdoc.corp.google.com/eng/howto/protocolbuffers/developerguide/encoding.shtml?cl=head#types
+  // 64-bit math is: (n << 1) ^ (n >> 63)
+  //
+  // To do this in 32 bits, we can get a 32-bit sign-flipping mask from the
+  // high word.
+  // Then we can operate on each word individually, with the addition of the
+  // "carry" to get the most significant bit from the low word into the high
+  // word.
+  var signFlipMask = bitsHigh >> 31;
+  bitsHigh = (bitsHigh << 1 | bitsLow >>> 31) ^ signFlipMask;
+  bitsLow = (bitsLow << 1) ^ signFlipMask;
+  return convert(bitsLow, bitsHigh);
+};
+
 
 /**
  * Joins two 32-bit values into a 64-bit unsigned integer and applies zigzag
@@ -330,21 +375,33 @@ jspb.utils.joinInt64 = function(bitsLow, bitsHigh) {
  * @return {number}
  */
 jspb.utils.joinZigzag64 = function(bitsLow, bitsHigh) {
-  // Extract the sign bit and shift right by one.
-  var sign = bitsLow & 1;
-  bitsLow = ((bitsLow >>> 1) | (bitsHigh << 31)) >>> 0;
-  bitsHigh = bitsHigh >>> 1;
+  return jspb.utils.fromZigzag64(bitsLow, bitsHigh, jspb.utils.joinInt64);
+};
 
-  // Increment the split value if the sign bit was set.
-  if (sign) {
-    bitsLow = (bitsLow + 1) >>> 0;
-    if (bitsLow == 0) {
-      bitsHigh = (bitsHigh + 1) >>> 0;
-    }
-  }
 
-  var result = jspb.utils.joinUint64(bitsLow, bitsHigh);
-  return sign ? -result : result;
+/**
+ * Converts split 64-bit values from zigzag encoding to standard two's
+ * complement encoding. Invokes the provided function to produce final result.
+ *
+ * @param {number} bitsLow
+ * @param {number} bitsHigh
+ * @param {function(number, number): T} convert Conversion function to produce
+ *     the result value, takes parameters (lowBits, highBits).
+ * @return {T}
+ * @template T
+ */
+jspb.utils.fromZigzag64 = function(bitsLow, bitsHigh, convert) {
+  // 64 bit math is:
+  //   signmask = (zigzag & 1) ? -1 : 0;
+  //   twosComplement = (zigzag >> 1) ^ signmask;
+  //
+  // To work with 32 bit, we can operate on both but "carry" the lowest bit
+  // from the high word by shifting it up 31 bits to be the most significant bit
+  // of the low word.
+  var signFlipMask = -(bitsLow & 1);
+  bitsLow = ((bitsLow >>> 1) | (bitsHigh << 31)) ^ signFlipMask;
+  bitsHigh = (bitsHigh >>> 1) ^ signFlipMask;
+  return convert(bitsLow, bitsHigh);
 };
 
 
@@ -427,16 +484,20 @@ jspb.utils.joinHash64 = function(bitsLow, bitsHigh) {
   return String.fromCharCode(a, b, c, d, e, f, g, h);
 };
 
-
 /**
  * Individual digits for number->string conversion.
- * @const {!Array.<number>}
+ * @const {!Array<string>}
  */
 jspb.utils.DIGITS = [
   '0', '1', '2', '3', '4', '5', '6', '7',
   '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'
 ];
 
+/** @const @private {number} '0' */
+jspb.utils.ZERO_CHAR_CODE_ = 48;
+
+/** @const @private {number} 'a' */
+jspb.utils.A_CHAR_CODE_ = 97;
 
 /**
  * Losslessly converts a 64-bit unsigned integer in 32:32 split representation
@@ -486,27 +547,20 @@ jspb.utils.joinUnsignedDecimalString = function(bitsLow, bitsHigh) {
     digitB %= base;
   }
 
-  // Convert base-1e7 digits to base-10, omitting leading zeroes.
-  var table = jspb.utils.DIGITS;
-  var start = false;
-  var result = '';
-
-  function emit(digit) {
-    var temp = base;
-    for (var i = 0; i < 7; i++) {
-      temp /= 10;
-      var decimalDigit = ((digit / temp) % 10) >>> 0;
-      if ((decimalDigit == 0) && !start) continue;
-      start = true;
-      result += table[decimalDigit];
+  // Convert base-1e7 digits to base-10, with optional leading zeroes.
+  function decimalFrom1e7(digit1e7, needLeadingZeros) {
+    var partial = digit1e7 ? String(digit1e7) : '';
+    if (needLeadingZeros) {
+      return '0000000'.slice(partial.length) + partial;
     }
+    return partial;
   }
 
-  if (digitC || start) emit(digitC);
-  if (digitB || start) emit(digitB);
-  if (digitA || start) emit(digitA);
-
-  return result;
+  return decimalFrom1e7(digitC, /*needLeadingZeros=*/ 0) +
+      decimalFrom1e7(digitB, /*needLeadingZeros=*/ digitC) +
+      // If the final 1e7 digit didn't need leading zeros, we would have
+      // returned via the trivial code path at the top.
+      decimalFrom1e7(digitA, /*needLeadingZeros=*/ 1);
 };
 
 
@@ -553,10 +607,10 @@ jspb.utils.hash64ToDecimalString = function(hash, signed) {
 /**
  * Converts an array of 8-character hash strings into their decimal
  * representations.
- * @param {!Array.<string>} hashes The array of hash strings to convert.
+ * @param {!Array<string>} hashes The array of hash strings to convert.
  * @param {boolean} signed True if we should treat the hash string as encoding
  *     a signed integer.
- * @return {!Array.<string>}
+ * @return {!Array<string>}
  */
 jspb.utils.hash64ArrayToDecimalStrings = function(hashes, signed) {
   var result = new Array(hashes.length);
@@ -566,6 +620,88 @@ jspb.utils.hash64ArrayToDecimalStrings = function(hashes, signed) {
   return result;
 };
 
+
+/**
+ * Converts a signed or unsigned decimal string into its hash string
+ * representation.
+ * @param {string} dec
+ * @return {string}
+ */
+jspb.utils.decimalStringToHash64 = function(dec) {
+  goog.asserts.assert(dec.length > 0);
+
+  // Check for minus sign.
+  var minus = false;
+  if (dec[0] === '-') {
+    minus = true;
+    dec = dec.slice(1);
+  }
+
+  // Store result as a byte array.
+  var resultBytes = [0, 0, 0, 0, 0, 0, 0, 0];
+
+  // Set result to m*result + c.
+  function muladd(m, c) {
+    for (var i = 0; i < 8 && (m !== 1 || c > 0); i++) {
+      var r = m * resultBytes[i] + c;
+      resultBytes[i] = r & 0xFF;
+      c = r >>> 8;
+    }
+  }
+
+  // Negate the result bits.
+  function neg() {
+    for (var i = 0; i < 8; i++) {
+      resultBytes[i] = (~resultBytes[i]) & 0xFF;
+    }
+  }
+
+  // For each decimal digit, set result to 10*result + digit.
+  for (var i = 0; i < dec.length; i++) {
+    muladd(10, dec.charCodeAt(i) - jspb.utils.ZERO_CHAR_CODE_);
+  }
+
+  // If there's a minus sign, convert into two's complement.
+  if (minus) {
+    neg();
+    muladd(1, 1);
+  }
+
+  return goog.crypt.byteArrayToString(resultBytes);
+};
+
+
+/**
+ * Converts a signed or unsigned decimal string into two 32-bit halves, and
+ * stores them in the temp variables listed above.
+ * @param {string} value The decimal string to convert.
+ */
+jspb.utils.splitDecimalString = function(value) {
+  jspb.utils.splitHash64(jspb.utils.decimalStringToHash64(value));
+};
+
+/**
+ * @param {number} nibble A 4-bit integer.
+ * @return {string}
+ * @private
+ */
+jspb.utils.toHexDigit_ = function(nibble) {
+  return String.fromCharCode(
+      nibble < 10 ? jspb.utils.ZERO_CHAR_CODE_ + nibble :
+                    jspb.utils.A_CHAR_CODE_ - 10 + nibble);
+};
+
+/**
+ * @param {number} hexCharCode
+ * @return {number}
+ * @private
+ */
+jspb.utils.fromHexCharCode_ = function(hexCharCode) {
+  if (hexCharCode >= jspb.utils.A_CHAR_CODE_) {
+    return hexCharCode - jspb.utils.A_CHAR_CODE_ + 10;
+  }
+  return hexCharCode - jspb.utils.ZERO_CHAR_CODE_;
+};
 
 /**
  * Converts an 8-character hash string into its hexadecimal representation.
@@ -579,8 +715,8 @@ jspb.utils.hash64ToHexString = function(hash) {
 
   for (var i = 0; i < 8; i++) {
     var c = hash.charCodeAt(7 - i);
-    temp[i * 2 + 2] = jspb.utils.DIGITS[c >> 4];
-    temp[i * 2 + 3] = jspb.utils.DIGITS[c & 0xF];
+    temp[i * 2 + 2] = jspb.utils.toHexDigit_(c >> 4);
+    temp[i * 2 + 3] = jspb.utils.toHexDigit_(c & 0xF);
   }
 
   var result = temp.join('');
@@ -601,8 +737,8 @@ jspb.utils.hexStringToHash64 = function(hex) {
 
   var result = '';
   for (var i = 0; i < 8; i++) {
-    var hi = jspb.utils.DIGITS.indexOf(hex[i * 2 + 2]);
-    var lo = jspb.utils.DIGITS.indexOf(hex[i * 2 + 3]);
+    var hi = jspb.utils.fromHexCharCode_(hex.charCodeAt(i * 2 + 2));
+    var lo = jspb.utils.fromHexCharCode_(hex.charCodeAt(i * 2 + 3));
     result = String.fromCharCode(hi * 16 + lo) + result;
   }
 
@@ -839,62 +975,16 @@ jspb.utils.countDelimitedFields = function(buffer, start, end, field) {
 
 
 /**
- * Clones a scalar field. Pulling this out to a helper method saves us a few
- * bytes of generated code.
- * @param {Array} array
- * @return {Array}
- */
-jspb.utils.cloneRepeatedScalarField = function(array) {
-  return array ? array.slice() : null;
-};
-
-
-/**
- * Clones an array of messages using the provided cloner function.
- * @param {Array.<jspb.BinaryMessage>} messages
- * @param {jspb.ClonerFunction} cloner
- * @return {Array.<jspb.BinaryMessage>}
- */
-jspb.utils.cloneRepeatedMessageField = function(messages, cloner) {
-  if (messages === null) return null;
-  var result = [];
-  for (var i = 0; i < messages.length; i++) {
-    result.push(cloner(messages[i]));
-  }
-  return result;
-};
-
-
-/**
- * Clones an array of byte blobs.
- * @param {Array.<Uint8Array>} blobs
- * @return {Array.<Uint8Array>}
- */
-jspb.utils.cloneRepeatedBlobField = function(blobs) {
-  if (blobs === null) return null;
-  var result = [];
-  for (var i = 0; i < blobs.length; i++) {
-    result.push(new Uint8Array(blobs[i]));
-  }
-  return result;
-};
-
-
-/**
  * String-ify bytes for text format. Should be optimized away in non-debug.
  * The returned string uses \xXX escapes for all values and is itself quoted.
  * [1, 31] serializes to '"\x01\x1f"'.
  * @param {jspb.ByteSource} byteSource The bytes to serialize.
- * @param {boolean=} opt_stringIsRawBytes The string is interpreted as a series
- * of raw bytes rather than base64 data.
  * @return {string} Stringified bytes for text format.
  */
-jspb.utils.debugBytesToTextFormat = function(byteSource,
-                                                opt_stringIsRawBytes) {
+jspb.utils.debugBytesToTextFormat = function(byteSource) {
   var s = '"';
   if (byteSource) {
-    var bytes =
-        jspb.utils.byteSourceToUint8Array(byteSource, opt_stringIsRawBytes);
+    var bytes = jspb.utils.byteSourceToUint8Array(byteSource);
     for (var i = 0; i < bytes.length; i++) {
       s += '\\x';
       if (bytes[i] < 16) s += '0';
@@ -911,7 +1001,7 @@ jspb.utils.debugBytesToTextFormat = function(byteSource,
  * @return {string} Stringified scalar for text format.
  */
 jspb.utils.debugScalarToTextFormat = function(scalar) {
-  if (goog.isString(scalar)) {
+  if (typeof scalar === 'string') {
     return goog.string.quote(scalar);
   } else {
     return scalar.toString();
@@ -925,9 +1015,8 @@ jspb.utils.debugScalarToTextFormat = function(scalar) {
  * exception.
  * @param {string} str
  * @return {!Uint8Array}
- * @private
  */
-jspb.utils.stringToByteArray_ = function(str) {
+jspb.utils.stringToByteArray = function(str) {
   var arr = new Uint8Array(str.length);
   for (var i = 0; i < str.length; i++) {
     var codepoint = str.charCodeAt(i);
@@ -944,13 +1033,10 @@ jspb.utils.stringToByteArray_ = function(str) {
 /**
  * Converts any type defined in jspb.ByteSource into a Uint8Array.
  * @param {!jspb.ByteSource} data
- * @param {boolean=} opt_stringIsRawBytes Interpret a string as a series of raw
- * bytes (encoded as codepoints 0--255 inclusive) rather than base64 data
- * (default behavior).
  * @return {!Uint8Array}
  * @suppress {invalidCasts}
  */
-jspb.utils.byteSourceToUint8Array = function(data, opt_stringIsRawBytes) {
+jspb.utils.byteSourceToUint8Array = function(data) {
   if (data.constructor === Uint8Array) {
     return /** @type {!Uint8Array} */(data);
   }
@@ -960,18 +1046,19 @@ jspb.utils.byteSourceToUint8Array = function(data, opt_stringIsRawBytes) {
     return /** @type {!Uint8Array} */(new Uint8Array(data));
   }
 
+  if (typeof Buffer != 'undefined' && data.constructor === Buffer) {
+    return /** @type {!Uint8Array} */ (
+        new Uint8Array(/** @type {?} */ (data)));
+  }
+
   if (data.constructor === Array) {
-    data = /** @type {!Array.<number>} */(data);
+    data = /** @type {!Array<number>} */(data);
     return /** @type {!Uint8Array} */(new Uint8Array(data));
   }
 
   if (data.constructor === String) {
     data = /** @type {string} */(data);
-    if (opt_stringIsRawBytes) {
-      return jspb.utils.stringToByteArray_(data);
-    } else {
-      return goog.crypt.base64.decodeStringToUint8Array(data);
-    }
+    return goog.crypt.base64.decodeStringToUint8Array(data);
   }
 
   goog.asserts.fail('Type not convertible to Uint8Array.');

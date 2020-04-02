@@ -34,6 +34,11 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Reflection;
+#if NET35
+// Needed for ReadOnlyDictionary, which does not exist in .NET 3.5
+using Google.Protobuf.Collections;
+#endif
 
 namespace Google.Protobuf.Reflection
 {
@@ -59,7 +64,8 @@ namespace Google.Protobuf.Reflection
         private readonly IList<FieldDescriptor> fieldsInDeclarationOrder;
         private readonly IList<FieldDescriptor> fieldsInNumberOrder;
         private readonly IDictionary<string, FieldDescriptor> jsonFieldMap;
-        
+        private Func<IMessage, bool> extensionSetIsInitialized;
+
         internal MessageDescriptor(DescriptorProto proto, FileDescriptor file, MessageDescriptor parent, int typeIndex, GeneratedClrTypeInfo generatedCodeInfo)
             : base(file, file.ComputeFullName(parent, proto.Name), typeIndex)
         {
@@ -68,28 +74,28 @@ namespace Google.Protobuf.Reflection
             ClrType = generatedCodeInfo?.ClrType;
             ContainingType = parent;
 
-            // Note use of generatedCodeInfo. rather than generatedCodeInfo?. here... we don't expect
-            // to see any nested oneofs, types or enums in "not actually generated" code... we do
-            // expect fields though (for map entry messages).
+            // If generatedCodeInfo is null, we just won't generate an accessor for any fields.
             Oneofs = DescriptorUtil.ConvertAndMakeReadOnly(
                 proto.OneofDecl,
                 (oneof, index) =>
-                new OneofDescriptor(oneof, file, this, index, generatedCodeInfo.OneofNames[index]));
+                new OneofDescriptor(oneof, file, this, index, generatedCodeInfo?.OneofNames[index]));
 
             NestedTypes = DescriptorUtil.ConvertAndMakeReadOnly(
                 proto.NestedType,
                 (type, index) =>
-                new MessageDescriptor(type, file, this, index, generatedCodeInfo.NestedTypes[index]));
+                new MessageDescriptor(type, file, this, index, generatedCodeInfo?.NestedTypes[index]));
 
             EnumTypes = DescriptorUtil.ConvertAndMakeReadOnly(
                 proto.EnumType,
                 (type, index) =>
-                new EnumDescriptor(type, file, this, index, generatedCodeInfo.NestedEnums[index]));
+                new EnumDescriptor(type, file, this, index, generatedCodeInfo?.NestedEnums[index]));
+
+            Extensions = new ExtensionCollection(this, generatedCodeInfo?.Extensions);
 
             fieldsInDeclarationOrder = DescriptorUtil.ConvertAndMakeReadOnly(
                 proto.Field,
                 (field, index) =>
-                new FieldDescriptor(field, file, this, index, generatedCodeInfo?.PropertyNames[index]));
+                new FieldDescriptor(field, file, this, index, generatedCodeInfo?.PropertyNames[index], null));
             fieldsInNumberOrder = new ReadOnlyCollection<FieldDescriptor>(fieldsInDeclarationOrder.OrderBy(field => field.FieldNumber).ToArray());
             // TODO: Use field => field.Proto.JsonName when we're confident it's appropriate. (And then use it in the formatter, too.)
             jsonFieldMap = CreateJsonFieldMap(fieldsInNumberOrder);
@@ -102,8 +108,8 @@ namespace Google.Protobuf.Reflection
             var map = new Dictionary<string, FieldDescriptor>();
             foreach (var field in fields)
             {
-                map[JsonFormatter.ToCamelCase(field.Name)] = field;
                 map[field.Name] = field;
+                map[field.JsonName] = field;
             }
             return new ReadOnlyDictionary<string, FieldDescriptor>(map);
         }
@@ -113,7 +119,37 @@ namespace Google.Protobuf.Reflection
         /// </summary>
         public override string Name => Proto.Name;
 
+        internal override IReadOnlyList<DescriptorBase> GetNestedDescriptorListForField(int fieldNumber)
+        {
+            switch (fieldNumber)
+            {
+                case DescriptorProto.FieldFieldNumber:
+                    return (IReadOnlyList<DescriptorBase>) fieldsInDeclarationOrder;
+                case DescriptorProto.NestedTypeFieldNumber:
+                    return (IReadOnlyList<DescriptorBase>) NestedTypes;
+                case DescriptorProto.EnumTypeFieldNumber:
+                    return (IReadOnlyList<DescriptorBase>) EnumTypes;
+                default:
+                    return null;
+            }
+        }
+
         internal DescriptorProto Proto { get; }
+
+        internal bool IsExtensionsInitialized(IMessage message)
+        {
+            if (Proto.ExtensionRange.Count == 0)
+            {
+                return true;
+            }
+
+            if (extensionSetIsInitialized == null)
+            {
+                extensionSetIsInitialized = ReflectionUtil.CreateIsInitializedCaller(ClrType);
+            }
+
+            return extensionSetIsInitialized(message);
+        }
 
         /// <summary>
         /// The CLR type used to represent message instances from this descriptor.
@@ -178,6 +214,14 @@ namespace Google.Protobuf.Reflection
         /// </value>
         public FieldCollection Fields { get; }
 
+        /// <summary>
+        /// An unmodifiable list of extensions defined in this message's scope.
+        /// Note that some extensions may be incomplete (FieldDescriptor.Extension may be null)
+        /// if they are declared in a file generated using a version of protoc that did not fully
+        /// support extensions in C#.
+        /// </summary>
+        public ExtensionCollection Extensions { get; }
+
         /// <value>
         /// An unmodifiable list of this message type's nested types.
         /// </value>
@@ -217,6 +261,29 @@ namespace Google.Protobuf.Reflection
             File.DescriptorPool.FindSymbol<T>(FullName + "." + name);
 
         /// <summary>
+        /// The (possibly empty) set of custom options for this message.
+        /// </summary>
+        [Obsolete("CustomOptions are obsolete. Use GetOption")]
+        public CustomOptions CustomOptions => new CustomOptions(Proto.Options?._extensions?.ValuesByNumber);
+
+        /// <summary>
+        /// Gets a single value message option for this descriptor
+        /// </summary>
+        public T GetOption<T>(Extension<MessageOptions, T> extension)
+        {
+            var value = Proto.Options.GetExtension(extension);
+            return value is IDeepCloneable<T> ? (value as IDeepCloneable<T>).Clone() : value;
+        }
+
+        /// <summary>
+        /// Gets a repeated value message option for this descriptor
+        /// </summary>
+        public Collections.RepeatedField<T> GetOption<T>(RepeatedExtension<MessageOptions, T> extension)
+        {
+            return Proto.Options.GetExtension(extension).Clone();
+        }
+
+        /// <summary>
         /// Looks up and cross-links all fields and nested types.
         /// </summary>
         internal void CrossLink()
@@ -235,6 +302,8 @@ namespace Google.Protobuf.Reflection
             {
                 oneof.CrossLink();
             }
+
+            Extensions.CrossLink();
         }
 
         /// <summary>

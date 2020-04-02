@@ -44,168 +44,10 @@
  */
 
 goog.provide('jspb.BinaryDecoder');
-goog.provide('jspb.BinaryIterator');
 
 goog.require('goog.asserts');
+goog.require('goog.crypt');
 goog.require('jspb.utils');
-
-
-
-/**
- * Simple helper class for traversing the contents of repeated scalar fields.
- * that may or may not have been packed into a wire-format blob.
- * @param {?jspb.BinaryDecoder=} opt_decoder
- * @param {?function(this:jspb.BinaryDecoder):(number|boolean|string)=}
- *     opt_next The decoder method to use for next().
- * @param {?Array.<number|boolean|string>=} opt_elements
- * @constructor
- * @struct
- */
-jspb.BinaryIterator = function(opt_decoder, opt_next, opt_elements) {
-  /** @private {jspb.BinaryDecoder} */
-  this.decoder_ = null;
-
-  /**
-   * The BinaryDecoder member function used when iterating over packed data.
-   * @private {?function(this:jspb.BinaryDecoder):(number|boolean|string)}
-   */
-  this.nextMethod_ = null;
-
-  /** @private {Array.<number>} */
-  this.elements_ = null;
-
-  /** @private {number} */
-  this.cursor_ = 0;
-
-  /** @private {number|boolean|string|null} */
-  this.nextValue_ = null;
-
-  /** @private {boolean} */
-  this.atEnd_ = true;
-
-  this.init_(opt_decoder, opt_next, opt_elements);
-};
-
-
-/**
- * @param {?jspb.BinaryDecoder=} opt_decoder
- * @param {?function(this:jspb.BinaryDecoder):(number|boolean|string)=}
- *     opt_next The decoder method to use for next().
- * @param {?Array.<number|boolean|string>=} opt_elements
- * @private
- */
-jspb.BinaryIterator.prototype.init_ =
-    function(opt_decoder, opt_next, opt_elements) {
-  if (opt_decoder && opt_next) {
-    this.decoder_ = opt_decoder;
-    this.nextMethod_ = opt_next;
-  }
-  this.elements_ = opt_elements ? opt_elements : null;
-  this.cursor_ = 0;
-  this.nextValue_ = null;
-  this.atEnd_ = !this.decoder_ && !this.elements_;
-
-  this.next();
-};
-
-
-/**
- * Global pool of BinaryIterator instances.
- * @private {!Array.<!jspb.BinaryIterator>}
- */
-jspb.BinaryIterator.instanceCache_ = [];
-
-
-/**
- * Allocates a BinaryIterator from the cache, creating a new one if the cache
- * is empty.
- * @param {?jspb.BinaryDecoder=} opt_decoder
- * @param {?function(this:jspb.BinaryDecoder):(number|boolean|string)=}
- *     opt_next The decoder method to use for next().
- * @param {?Array.<number|boolean|string>=} opt_elements
- * @return {!jspb.BinaryIterator}
- */
-jspb.BinaryIterator.alloc = function(opt_decoder, opt_next, opt_elements) {
-  if (jspb.BinaryIterator.instanceCache_.length) {
-    var iterator = jspb.BinaryIterator.instanceCache_.pop();
-    iterator.init_(opt_decoder, opt_next, opt_elements);
-    return iterator;
-  } else {
-    return new jspb.BinaryIterator(opt_decoder, opt_next, opt_elements);
-  }
-};
-
-
-/**
- * Puts this instance back in the instance cache.
- */
-jspb.BinaryIterator.prototype.free = function() {
-  this.clear();
-  if (jspb.BinaryIterator.instanceCache_.length < 100) {
-    jspb.BinaryIterator.instanceCache_.push(this);
-  }
-};
-
-
-/**
- * Clears the iterator.
- */
-jspb.BinaryIterator.prototype.clear = function() {
-  if (this.decoder_) {
-    this.decoder_.free();
-  }
-  this.decoder_ = null;
-  this.nextMethod_ = null;
-  this.elements_ = null;
-  this.cursor_ = 0;
-  this.nextValue_ = null;
-  this.atEnd_ = true;
-};
-
-
-/**
- * Returns the element at the iterator, or null if the iterator is invalid or
- * past the end of the decoder/array.
- * @return {number|boolean|string|null}
- */
-jspb.BinaryIterator.prototype.get = function() {
-  return this.nextValue_;
-};
-
-
-/**
- * Returns true if the iterator is at the end of the decoder/array.
- * @return {boolean}
- */
-jspb.BinaryIterator.prototype.atEnd = function() {
-  return this.atEnd_;
-};
-
-
-/**
- * Returns the element at the iterator and steps to the next element,
- * equivalent to '*pointer++' in C.
- * @return {number|boolean|string|null}
- */
-jspb.BinaryIterator.prototype.next = function() {
-  var lastValue = this.nextValue_;
-  if (this.decoder_) {
-    if (this.decoder_.atEnd()) {
-      this.nextValue_ = null;
-      this.atEnd_ = true;
-    } else {
-      this.nextValue_ = this.nextMethod_.call(this.decoder_);
-    }
-  } else if (this.elements_) {
-    if (this.cursor_ == this.elements_.length) {
-      this.nextValue_ = null;
-      this.atEnd_ = true;
-    } else {
-      this.nextValue_ = this.elements_[this.cursor_++];
-    }
-  }
-  return lastValue;
-};
 
 
 
@@ -223,7 +65,7 @@ jspb.BinaryIterator.prototype.next = function() {
 jspb.BinaryDecoder = function(opt_bytes, opt_start, opt_length) {
   /**
    * Typed byte-wise view of the source buffer.
-   * @private {Uint8Array}
+   * @private {?Uint8Array}
    */
   this.bytes_ = null;
 
@@ -246,20 +88,6 @@ jspb.BinaryDecoder = function(opt_bytes, opt_start, opt_length) {
   this.cursor_ = 0;
 
   /**
-   * Temporary storage for the low 32 bits of 64-bit data types that we're
-   * decoding.
-   * @private {number}
-   */
-  this.tempLow_ = 0;
-
-  /**
-   * Temporary storage for the high 32 bits of 64-bit data types that we're
-   * decoding.
-   * @private {number}
-   */
-  this.tempHigh_ = 0;
-
-  /**
    * Set to true if this decoder encountered an error due to corrupt data.
    * @private {boolean}
    */
@@ -273,7 +101,7 @@ jspb.BinaryDecoder = function(opt_bytes, opt_start, opt_length) {
 
 /**
  * Global pool of BinaryDecoder instances.
- * @private {!Array.<!jspb.BinaryDecoder>}
+ * @private {!Array<!jspb.BinaryDecoder>}
  */
 jspb.BinaryDecoder.instanceCache_ = [];
 
@@ -335,7 +163,7 @@ jspb.BinaryDecoder.prototype.clear = function() {
 
 /**
  * Returns the raw buffer.
- * @return {Uint8Array} The raw buffer.
+ * @return {?Uint8Array} The raw buffer.
  */
 jspb.BinaryDecoder.prototype.getBuffer = function() {
   return this.bytes_;
@@ -352,9 +180,9 @@ jspb.BinaryDecoder.prototype.getBuffer = function() {
 jspb.BinaryDecoder.prototype.setBlock =
     function(data, opt_start, opt_length) {
   this.bytes_ = jspb.utils.byteSourceToUint8Array(data);
-  this.start_ = goog.isDef(opt_start) ? opt_start : 0;
-  this.end_ =
-      goog.isDef(opt_length) ? this.start_ + opt_length : this.bytes_.length;
+  this.start_ = (opt_start !== undefined) ? opt_start : 0;
+  this.end_ = (opt_length !== undefined) ? this.start_ + opt_length :
+                                           this.bytes_.length;
   this.cursor_ = this.start_;
 };
 
@@ -441,9 +269,9 @@ jspb.BinaryDecoder.prototype.getError = function() {
 
 
 /**
- * Reads an unsigned varint from the binary stream and stores it as a split
- * 64-bit integer. Since this does not convert the value to a number, no
- * precision is lost.
+ * Reads an unsigned varint from the binary stream and invokes the conversion
+ * function with the value in two signed 32 bit integers to produce the result.
+ * Since this does not convert the value to a number, no precision is lost.
  *
  * It's possible for an unsigned varint to be incorrectly encoded - more than
  * 64 bits' worth of data could be present. If this happens, this method will
@@ -453,49 +281,95 @@ jspb.BinaryDecoder.prototype.getError = function() {
  * details on the format, see
  * https://developers.google.com/protocol-buffers/docs/encoding
  *
- * @private
+ * @param {function(number, number): T} convert Conversion function to produce
+ *     the result value, takes parameters (lowBits, highBits).
+ * @return {T}
+ * @template T
  */
-jspb.BinaryDecoder.prototype.readSplitVarint64_ = function() {
-  var temp;
+jspb.BinaryDecoder.prototype.readSplitVarint64 = function(convert) {
+  var temp = 128;
   var lowBits = 0;
   var highBits = 0;
 
   // Read the first four bytes of the varint, stopping at the terminator if we
   // see it.
-  for (var i = 0; i < 4; i++) {
+  for (var i = 0; i < 4 && temp >= 128; i++) {
     temp = this.bytes_[this.cursor_++];
     lowBits |= (temp & 0x7F) << (i * 7);
-    if (temp < 128) {
-      this.tempLow_ = lowBits >>> 0;
-      this.tempHigh_ = 0;
-      return;
-    }
   }
 
-  // Read the fifth byte, which straddles the low and high dwords.
-  temp = this.bytes_[this.cursor_++];
-  lowBits |= (temp & 0x7F) << 28;
-  highBits |= (temp & 0x7F) >> 4;
-  if (temp < 128) {
-    this.tempLow_ = lowBits >>> 0;
-    this.tempHigh_ = highBits >>> 0;
-    return;
-  }
-
-  // Read the sixth through tenth byte.
-  for (var i = 0; i < 5; i++) {
+  if (temp >= 128) {
+    // Read the fifth byte, which straddles the low and high dwords.
     temp = this.bytes_[this.cursor_++];
-    highBits |= (temp & 0x7F) << (i * 7 + 3);
-    if (temp < 128) {
-      this.tempLow_ = lowBits >>> 0;
-      this.tempHigh_ = highBits >>> 0;
-      return;
+    lowBits |= (temp & 0x7F) << 28;
+    highBits |= (temp & 0x7F) >> 4;
+  }
+
+  if (temp >= 128) {
+    // Read the sixth through tenth byte.
+    for (var i = 0; i < 5 && temp >= 128; i++) {
+      temp = this.bytes_[this.cursor_++];
+      highBits |= (temp & 0x7F) << (i * 7 + 3);
     }
+  }
+
+  if (temp < 128) {
+    return convert(lowBits >>> 0, highBits >>> 0);
   }
 
   // If we did not see the terminator, the encoding was invalid.
   goog.asserts.fail('Failed to read varint, encoding is invalid.');
   this.error_ = true;
+};
+
+
+/**
+ * Reads a signed zigzag encoded varint from the binary stream and invokes
+ * the conversion function with the value in two signed 32 bit integers to
+ * produce the result. Since this does not convert the value to a number, no
+ * precision is lost.
+ *
+ * It's possible for an unsigned varint to be incorrectly encoded - more than
+ * 64 bits' worth of data could be present. If this happens, this method will
+ * throw an error.
+ *
+ * Zigzag encoding is a modification of varint encoding that reduces the
+ * storage overhead for small negative integers - for more details on the
+ * format, see https://developers.google.com/protocol-buffers/docs/encoding
+ *
+ * @param {function(number, number): T} convert Conversion function to produce
+ *     the result value, takes parameters (lowBits, highBits).
+ * @return {T}
+ * @template T
+ */
+jspb.BinaryDecoder.prototype.readSplitZigzagVarint64 = function(convert) {
+  return this.readSplitVarint64(function(low, high) {
+    return jspb.utils.fromZigzag64(low, high, convert);
+  });
+};
+
+
+/**
+ * Reads a 64-bit fixed-width value from the stream and invokes the conversion
+ * function with the value in two signed 32 bit integers to produce the result.
+ * Since this does not convert the value to a number, no precision is lost.
+ *
+ * @param {function(number, number): T} convert Conversion function to produce
+ *     the result value, takes parameters (lowBits, highBits).
+ * @return {T}
+ * @template T
+ */
+jspb.BinaryDecoder.prototype.readSplitFixed64 = function(convert) {
+  var bytes = this.bytes_;
+  var cursor = this.cursor_;
+  this.cursor_ += 8;
+  var lowBits = 0;
+  var highBits = 0;
+  for (var i = cursor + 7; i >= cursor; i--) {
+    lowBits = (lowBits << 8) | bytes[i];
+    highBits = (highBits << 8) | bytes[i + 4];
+  }
+  return convert(lowBits, highBits);
 };
 
 
@@ -582,27 +456,24 @@ jspb.BinaryDecoder.prototype.readUnsignedVarint32 = function() {
   x |= (temp & 0x0F) << 28;
   if (temp < 128) {
     // We're reading the high bits of an unsigned varint. The byte we just read
-    // also contains bits 33 through 35, which we're going to discard. Those
-    // bits _must_ be zero, or the encoding is invalid.
-    goog.asserts.assert((temp & 0xF0) == 0);
+    // also contains bits 33 through 35, which we're going to discard.
     this.cursor_ += 5;
     goog.asserts.assert(this.cursor_ <= this.end_);
     return x >>> 0;
   }
 
-  // If we get here, we're reading the sign extension of a negative 32-bit int.
-  // We can skip these bytes, as we know in advance that they have to be all
-  // 1's if the varint is correctly encoded. Since we also know the value is
-  // negative, we don't have to coerce it to unsigned before we return it.
+  // If we get here, we need to truncate coming bytes. However we need to make
+  // sure cursor place is correct.
+  this.cursor_ += 5;
+  if (bytes[this.cursor_++] >= 128 &&
+      bytes[this.cursor_++] >= 128 &&
+      bytes[this.cursor_++] >= 128 &&
+      bytes[this.cursor_++] >= 128 &&
+      bytes[this.cursor_++] >= 128) {
+    // If we get here, the varint is too long.
+    goog.asserts.assert(false);
+  }
 
-  goog.asserts.assert((temp & 0xF0) == 0xF0);
-  goog.asserts.assert(bytes[this.cursor_ + 5] == 0xFF);
-  goog.asserts.assert(bytes[this.cursor_ + 6] == 0xFF);
-  goog.asserts.assert(bytes[this.cursor_ + 7] == 0xFF);
-  goog.asserts.assert(bytes[this.cursor_ + 8] == 0xFF);
-  goog.asserts.assert(bytes[this.cursor_ + 9] == 0x01);
-
-  this.cursor_ += 10;
   goog.asserts.assert(this.cursor_ <= this.end_);
   return x;
 };
@@ -630,6 +501,7 @@ jspb.BinaryDecoder.prototype.readUnsignedVarint32String = function() {
   var value = this.readUnsignedVarint32();
   return value.toString();
 };
+
 
 /**
  * Reads a 32-bit signed variant and returns its value as a string.
@@ -669,8 +541,7 @@ jspb.BinaryDecoder.prototype.readZigzagVarint32 = function() {
  *     integer exceeds 2^53.
  */
 jspb.BinaryDecoder.prototype.readUnsignedVarint64 = function() {
-  this.readSplitVarint64_();
-  return jspb.utils.joinUint64(this.tempLow_, this.tempHigh_);
+  return this.readSplitVarint64(jspb.utils.joinUint64);
 };
 
 
@@ -681,8 +552,7 @@ jspb.BinaryDecoder.prototype.readUnsignedVarint64 = function() {
  * @return {string} The decoded unsigned varint as a decimal string.
  */
 jspb.BinaryDecoder.prototype.readUnsignedVarint64String = function() {
-  this.readSplitVarint64_();
-  return jspb.utils.joinUnsignedDecimalString(this.tempLow_, this.tempHigh_);
+  return this.readSplitVarint64(jspb.utils.joinUnsignedDecimalString);
 };
 
 
@@ -695,8 +565,7 @@ jspb.BinaryDecoder.prototype.readUnsignedVarint64String = function() {
  *     integer exceeds 2^53.
  */
 jspb.BinaryDecoder.prototype.readSignedVarint64 = function() {
-  this.readSplitVarint64_();
-  return jspb.utils.joinInt64(this.tempLow_, this.tempHigh_);
+  return this.readSplitVarint64(jspb.utils.joinInt64);
 };
 
 
@@ -707,8 +576,7 @@ jspb.BinaryDecoder.prototype.readSignedVarint64 = function() {
  * @return {string} The decoded signed varint as a decimal string.
  */
 jspb.BinaryDecoder.prototype.readSignedVarint64String = function() {
-  this.readSplitVarint64_();
-  return jspb.utils.joinSignedDecimalString(this.tempLow_, this.tempHigh_);
+  return this.readSplitVarint64(jspb.utils.joinSignedDecimalString);
 };
 
 
@@ -726,8 +594,39 @@ jspb.BinaryDecoder.prototype.readSignedVarint64String = function() {
  *     integer exceeds 2^53.
  */
 jspb.BinaryDecoder.prototype.readZigzagVarint64 = function() {
-  this.readSplitVarint64_();
-  return jspb.utils.joinZigzag64(this.tempLow_, this.tempHigh_);
+  return this.readSplitVarint64(jspb.utils.joinZigzag64);
+};
+
+
+/**
+ * Reads a signed, zigzag-encoded 64-bit varint from the binary stream
+ * losslessly and returns it as an 8-character Unicode string for use as a hash
+ * table key.
+ *
+ * Zigzag encoding is a modification of varint encoding that reduces the
+ * storage overhead for small negative integers - for more details on the
+ * format, see https://developers.google.com/protocol-buffers/docs/encoding
+ *
+ * @return {string} The decoded zigzag varint in hash64 format.
+ */
+jspb.BinaryDecoder.prototype.readZigzagVarintHash64 = function() {
+  return this.readSplitZigzagVarint64(jspb.utils.joinHash64);
+};
+
+
+/**
+ * Reads a signed, zigzag-encoded 64-bit varint from the binary stream and
+ * returns its value as a string.
+ *
+ * Zigzag encoding is a modification of varint encoding that reduces the
+ * storage overhead for small negative integers - for more details on the
+ * format, see https://developers.google.com/protocol-buffers/docs/encoding
+ *
+ * @return {string} The decoded signed, zigzag-encoded 64-bit varint as a
+ * string.
+ */
+jspb.BinaryDecoder.prototype.readZigzagVarint64String = function() {
+  return this.readSplitZigzagVarint64(jspb.utils.joinSignedDecimalString);
 };
 
 
@@ -790,6 +689,20 @@ jspb.BinaryDecoder.prototype.readUint64 = function() {
 
 
 /**
+ * Reads a raw unsigned 64-bit integer from the binary stream. Note that since
+ * Javascript represents all numbers as double-precision floats, there will be
+ * precision lost if the absolute value of the integer is larger than 2^53.
+ *
+ * @return {string} The unsigned 64-bit integer read from the binary stream.
+ */
+jspb.BinaryDecoder.prototype.readUint64String = function() {
+  var bitsLow = this.readUint32();
+  var bitsHigh = this.readUint32();
+  return jspb.utils.joinUnsignedDecimalString(bitsLow, bitsHigh);
+};
+
+
+/**
  * Reads a raw signed 8-bit integer from the binary stream.
  *
  * @return {number} The signed 8-bit integer read from the binary stream.
@@ -835,7 +748,7 @@ jspb.BinaryDecoder.prototype.readInt32 = function() {
 /**
  * Reads a raw signed 64-bit integer from the binary stream. Note that since
  * Javascript represents all numbers as double-precision floats, there will be
- * precision lost if the absolute vlaue of the integer is larger than 2^53.
+ * precision lost if the absolute value of the integer is larger than 2^53.
  *
  * @return {number} The signed 64-bit integer read from the binary stream.
  *     Precision will be lost if the integer exceeds 2^53.
@@ -844,6 +757,20 @@ jspb.BinaryDecoder.prototype.readInt64 = function() {
   var bitsLow = this.readUint32();
   var bitsHigh = this.readUint32();
   return jspb.utils.joinInt64(bitsLow, bitsHigh);
+};
+
+
+/**
+ * Reads a raw signed 64-bit integer from the binary stream and returns it as a
+ * string.
+ *
+ * @return {string} The signed 64-bit integer read from the binary stream.
+ *     Precision will be lost if the integer exceeds 2^53.
+ */
+jspb.BinaryDecoder.prototype.readInt64String = function() {
+  var bitsLow = this.readUint32();
+  var bitsHigh = this.readUint32();
+  return jspb.utils.joinSignedDecimalString(bitsLow, bitsHigh);
 };
 
 
@@ -894,11 +821,9 @@ jspb.BinaryDecoder.prototype.readEnum = function() {
 
 /**
  * Reads and parses a UTF-8 encoded unicode string from the stream.
- * The code is inspired by maps.vectortown.parse.StreamedDataViewReader, with
- * the exception that the implementation here does not get confused if it
- * encounters characters longer than three bytes. These characters are ignored
- * though, as they are extremely rare: three UTF-8 bytes cover virtually all
- * characters in common use (http://en.wikipedia.org/wiki/UTF-8).
+ * The code is inspired by maps.vectortown.parse.StreamedDataViewReader.
+ * Supports codepoints from U+0000 up to U+10FFFF.
+ * (http://en.wikipedia.org/wiki/UTF-8).
  * @param {number} length The length of the string to read.
  * @return {string} The decoded string.
  */
@@ -906,30 +831,50 @@ jspb.BinaryDecoder.prototype.readString = function(length) {
   var bytes = this.bytes_;
   var cursor = this.cursor_;
   var end = cursor + length;
-  var chars = [];
+  var codeUnits = [];
 
+  var result = '';
   while (cursor < end) {
     var c = bytes[cursor++];
     if (c < 128) { // Regular 7-bit ASCII.
-      chars.push(c);
+      codeUnits.push(c);
     } else if (c < 192) {
       // UTF-8 continuation mark. We are out of sync. This
       // might happen if we attempted to read a character
-      // with more than three bytes.
+      // with more than four bytes.
       continue;
     } else if (c < 224) { // UTF-8 with two bytes.
       var c2 = bytes[cursor++];
-      chars.push(((c & 31) << 6) | (c2 & 63));
+      codeUnits.push(((c & 31) << 6) | (c2 & 63));
     } else if (c < 240) { // UTF-8 with three bytes.
       var c2 = bytes[cursor++];
       var c3 = bytes[cursor++];
-      chars.push(((c & 15) << 12) | ((c2 & 63) << 6) | (c3 & 63));
+      codeUnits.push(((c & 15) << 12) | ((c2 & 63) << 6) | (c3 & 63));
+    } else if (c < 248) { // UTF-8 with 4 bytes.
+      var c2 = bytes[cursor++];
+      var c3 = bytes[cursor++];
+      var c4 = bytes[cursor++];
+      // Characters written on 4 bytes have 21 bits for a codepoint.
+      // We can't fit that on 16bit characters, so we use surrogates.
+      var codepoint = ((c & 7) << 18) | ((c2 & 63) << 12) | ((c3 & 63) << 6) | (c4 & 63);
+      // Surrogates formula from wikipedia.
+      // 1. Subtract 0x10000 from codepoint
+      codepoint -= 0x10000;
+      // 2. Split this into the high 10-bit value and the low 10-bit value
+      // 3. Add 0xD800 to the high value to form the high surrogate
+      // 4. Add 0xDC00 to the low value to form the low surrogate:
+      var low = (codepoint & 1023) + 0xDC00;
+      var high = ((codepoint >> 10) & 1023) + 0xD800;
+      codeUnits.push(high, low);
+    }
+
+    // Avoid exceeding the maximum stack size when calling `apply`.
+    if (codeUnits.length >= 8192) {
+      result += String.fromCharCode.apply(null, codeUnits);
+      codeUnits.length = 0;
     }
   }
-
-  // String.fromCharCode.apply is faster than manually appending characters on
-  // Chrome 25+, and generates no additional cons string garbage.
-  var result = String.fromCharCode.apply(null, chars);
+  result += goog.crypt.byteArrayToString(codeUnits);
   this.cursor_ = cursor;
   return result;
 };
@@ -950,14 +895,15 @@ jspb.BinaryDecoder.prototype.readStringWithLength = function() {
  * Reads a block of raw bytes from the binary stream.
  *
  * @param {number} length The number of bytes to read.
- * @return {Uint8Array} The decoded block of bytes, or null if the length was
- *     invalid.
+ * @return {!Uint8Array} The decoded block of bytes, or an empty block if the
+ *     length was invalid.
  */
 jspb.BinaryDecoder.prototype.readBytes = function(length) {
   if (length < 0 ||
       this.cursor_ + length > this.bytes_.length) {
     this.error_ = true;
-    return null;
+    goog.asserts.fail('Invalid byte length!');
+    return new Uint8Array(0);
   }
 
   var result = this.bytes_.subarray(this.cursor_, this.cursor_ + length);
@@ -975,8 +921,7 @@ jspb.BinaryDecoder.prototype.readBytes = function(length) {
  * @return {string} The hash value.
  */
 jspb.BinaryDecoder.prototype.readVarintHash64 = function() {
-  this.readSplitVarint64_();
-  return jspb.utils.joinHash64(this.tempLow_, this.tempHigh_);
+  return this.readSplitVarint64(jspb.utils.joinHash64);
 };
 
 

@@ -36,8 +36,16 @@
 #import "GPBWireFormat.h"
 #import "GPBMessage_PackagePrivate.h"
 
-// The address of this variable is used as a key for obj_getAssociatedObject.
+// Direct access is use for speed, to avoid even internally declaring things
+// read/write, etc. The warning is enabled in the project to ensure code calling
+// protos can turn on -Wdirect-ivar-access without issues.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdirect-ivar-access"
+
+// The addresses of these variables are used as keys for objc_getAssociatedObject.
 static const char kTextFormatExtraValueKey = 0;
+static const char kParentClassValueKey = 0;
+static const char kClassNameSuffixKey = 0;
 
 // Utility function to generate selectors on the fly.
 static SEL SelFromStrings(const char *prefix, const char *middle,
@@ -118,6 +126,8 @@ static NSArray *NewFieldsArrayForHasIndex(int hasIndex,
   GPBFileSyntax syntax = file.syntax;
   BOOL fieldsIncludeDefault =
       (flags & GPBDescriptorInitializationFlag_FieldsWithDefault) != 0;
+  BOOL usesClassRefs =
+      (flags & GPBDescriptorInitializationFlag_UsesClassRefs) != 0;
 
   void *desc;
   for (uint32_t i = 0; i < fieldCount; ++i) {
@@ -135,6 +145,7 @@ static NSArray *NewFieldsArrayForHasIndex(int hasIndex,
     GPBFieldDescriptor *fieldDescriptor =
         [[GPBFieldDescriptor alloc] initWithFieldDescription:desc
                                              includesDefault:fieldsIncludeDefault
+                                               usesClassRefs:usesClassRefs
                                                       syntax:syntax];
     [fields addObject:fieldDescriptor];
     [fieldDescriptor release];
@@ -209,8 +220,97 @@ static NSArray *NewFieldsArrayForHasIndex(int hasIndex,
   extensionRangesCount_ = count;
 }
 
+- (void)setupContainingMessageClass:(Class)messageClass {
+  objc_setAssociatedObject(self, &kParentClassValueKey,
+                           messageClass,
+                           OBJC_ASSOCIATION_ASSIGN);
+}
+
+- (void)setupContainingMessageClassName:(const char *)msgClassName {
+  // Note: Only fetch the class here, can't send messages to it because
+  // that could cause cycles back to this class within +initialize if
+  // two messages have each other in fields (i.e. - they build a graph).
+  Class clazz = objc_getClass(msgClassName);
+  NSAssert(clazz, @"Class %s not defined", msgClassName);
+  [self setupContainingMessageClass:clazz];
+}
+
+- (void)setupMessageClassNameSuffix:(NSString *)suffix {
+  if (suffix.length) {
+    objc_setAssociatedObject(self, &kClassNameSuffixKey,
+                             suffix,
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+  }
+}
+
 - (NSString *)name {
   return NSStringFromClass(messageClass_);
+}
+
+- (GPBDescriptor *)containingType {
+  Class parentClass = objc_getAssociatedObject(self, &kParentClassValueKey);
+  return [parentClass descriptor];
+}
+
+- (NSString *)fullName {
+  NSString *className = NSStringFromClass(self.messageClass);
+  GPBFileDescriptor *file = self.file;
+  NSString *objcPrefix = file.objcPrefix;
+  if (objcPrefix && ![className hasPrefix:objcPrefix]) {
+    NSAssert(0,
+             @"Class didn't have correct prefix? (%@ - %@)",
+             className, objcPrefix);
+    return nil;
+  }
+  GPBDescriptor *parent = self.containingType;
+
+  NSString *name = nil;
+  if (parent) {
+    NSString *parentClassName = NSStringFromClass(parent.messageClass);
+    // The generator will add _Class to avoid reserved words, drop it.
+    NSString *suffix = objc_getAssociatedObject(parent, &kClassNameSuffixKey);
+    if (suffix) {
+      if (![parentClassName hasSuffix:suffix]) {
+        NSAssert(0,
+                 @"ParentMessage class didn't have correct suffix? (%@ - %@)",
+                 className, suffix);
+        return nil;
+      }
+      parentClassName =
+          [parentClassName substringToIndex:(parentClassName.length - suffix.length)];
+    }
+    NSString *parentPrefix = [parentClassName stringByAppendingString:@"_"];
+    if (![className hasPrefix:parentPrefix]) {
+      NSAssert(0,
+               @"Class didn't have the correct parent name prefix? (%@ - %@)",
+               parentPrefix, className);
+      return nil;
+    }
+    name = [className substringFromIndex:parentPrefix.length];
+  } else {
+    name = [className substringFromIndex:objcPrefix.length];
+  }
+
+  // The generator will add _Class to avoid reserved words, drop it.
+  NSString *suffix = objc_getAssociatedObject(self, &kClassNameSuffixKey);
+  if (suffix) {
+    if (![name hasSuffix:suffix]) {
+      NSAssert(0,
+               @"Message class didn't have correct suffix? (%@ - %@)",
+               name, suffix);
+      return nil;
+    }
+    name = [name substringToIndex:(name.length - suffix.length)];
+  }
+
+  NSString *prefix = (parent != nil ? parent.fullName : file.package);
+  NSString *result;
+  if (prefix.length > 0) {
+    result = [NSString stringWithFormat:@"%@.%@", prefix, name];
+  } else {
+    result = name;
+  }
+  return result;
 }
 
 - (id)copyWithZone:(NSZone *)zone {
@@ -249,11 +349,25 @@ static NSArray *NewFieldsArrayForHasIndex(int hasIndex,
 
 @implementation GPBFileDescriptor {
   NSString *package_;
+  NSString *objcPrefix_;
   GPBFileSyntax syntax_;
 }
 
 @synthesize package = package_;
+@synthesize objcPrefix = objcPrefix_;
 @synthesize syntax = syntax_;
+
+- (instancetype)initWithPackage:(NSString *)package
+                     objcPrefix:(NSString *)objcPrefix
+                         syntax:(GPBFileSyntax)syntax {
+  self = [super init];
+  if (self) {
+    package_ = [package copy];
+    objcPrefix_ = [objcPrefix copy];
+    syntax_ = syntax;
+  }
+  return self;
+}
 
 - (instancetype)initWithPackage:(NSString *)package
                          syntax:(GPBFileSyntax)syntax {
@@ -263,6 +377,12 @@ static NSArray *NewFieldsArrayForHasIndex(int hasIndex,
     syntax_ = syntax;
   }
   return self;
+}
+
+- (void)dealloc {
+  [package_ release];
+  [objcPrefix_ release];
+  [super dealloc];
 }
 
 @end
@@ -291,7 +411,7 @@ static NSArray *NewFieldsArrayForHasIndex(int hasIndex,
 }
 
 - (NSString *)name {
-  return @(name_);
+  return (NSString * _Nonnull)@(name_);
 }
 
 - (GPBFieldDescriptor *)fieldWithNumber:(uint32_t)fieldNumber {
@@ -367,6 +487,7 @@ uint32_t GPBFieldAlternateTag(GPBFieldDescriptor *self) {
 
 - (instancetype)initWithFieldDescription:(void *)description
                          includesDefault:(BOOL)includesDefault
+                           usesClassRefs:(BOOL)usesClassRefs
                                   syntax:(GPBFileSyntax)syntax {
   if ((self = [super init])) {
     GPBMessageFieldDescription *coreDesc;
@@ -404,9 +525,17 @@ uint32_t GPBFieldAlternateTag(GPBFieldDescriptor *self) {
 
     // Extra type specific data.
     if (isMessage) {
-      const char *className = coreDesc->dataTypeSpecific.className;
-      msgClass_ = objc_getClass(className);
-      NSAssert(msgClass_, @"Class %s not defined", className);
+      // Note: Only fetch the class here, can't send messages to it because
+      // that could cause cycles back to this class within +initialize if
+      // two messages have each other in fields (i.e. - they build a graph).
+      if (usesClassRefs) {
+        msgClass_ = coreDesc->dataTypeSpecific.clazz;
+      } else {
+        // Backwards compatibility for sources generated with older protoc.
+        const char *className = coreDesc->dataTypeSpecific.className;
+        msgClass_ = objc_getClass(className);
+        NSAssert(msgClass_, @"Class %s not defined", className);
+      }
     } else if (dataType == GPBDataTypeEnum) {
       if ((coreDesc->flags & GPBFieldHasEnumDescriptor) != 0) {
         enumHandling_.enumDescriptor_ =
@@ -425,7 +554,8 @@ uint32_t GPBFieldAlternateTag(GPBFieldDescriptor *self) {
         // descriptor structure.
         const uint8_t *bytes = (const uint8_t *)defaultValue_.valueData;
         if (bytes) {
-          uint32_t length = *((uint32_t *)bytes);
+          uint32_t length;
+          memcpy(&length, bytes, sizeof(length));
           length = ntohl(length);
           bytes += sizeof(length);
           defaultValue_.valueData =
@@ -435,6 +565,15 @@ uint32_t GPBFieldAlternateTag(GPBFieldDescriptor *self) {
     }
   }
   return self;
+}
+
+- (instancetype)initWithFieldDescription:(void *)description
+                         includesDefault:(BOOL)includesDefault
+                                  syntax:(GPBFileSyntax)syntax {
+  return [self initWithFieldDescription:description
+                        includesDefault:includesDefault
+                          usesClassRefs:NO
+                                 syntax:syntax];
 }
 
 - (void)dealloc {
@@ -458,7 +597,7 @@ uint32_t GPBFieldAlternateTag(GPBFieldDescriptor *self) {
 }
 
 - (NSString *)name {
-  return @(description_->name);
+  return (NSString * _Nonnull)@(description_->name);
 }
 
 - (BOOL)isRequired {
@@ -695,6 +834,7 @@ uint32_t GPBFieldAlternateTag(GPBFieldDescriptor *self) {
       return;
     }
     uint32_t *offsets = malloc(valueCount_ * sizeof(uint32_t));
+    if (!offsets) return;
     const char *scan = valueNames_;
     for (uint32_t i = 0; i < valueCount_; ++i) {
       offsets[i] = (uint32_t)(scan - valueNames_);
@@ -706,13 +846,9 @@ uint32_t GPBFieldAlternateTag(GPBFieldDescriptor *self) {
 }
 
 - (NSString *)enumNameForValue:(int32_t)number {
-  if (nameOffsets_ == NULL) [self calcValueNameOffsets];
-
   for (uint32_t i = 0; i < valueCount_; ++i) {
     if (values_[i] == number) {
-      const char *valueName = valueNames_ + nameOffsets_[i];
-      NSString *fullName = [NSString stringWithFormat:@"%@_%s", name_, valueName];
-      return fullName;
+      return [self getEnumNameForIndex:i];
     }
   }
   return nil;
@@ -731,6 +867,7 @@ uint32_t GPBFieldAlternateTag(GPBFieldDescriptor *self) {
   nameAsCStr += prefixLen;
 
   if (nameOffsets_ == NULL) [self calcValueNameOffsets];
+  if (nameOffsets_ == NULL) return NO;
 
   // Find it.
   for (uint32_t i = 0; i < valueCount_; ++i) {
@@ -745,9 +882,23 @@ uint32_t GPBFieldAlternateTag(GPBFieldDescriptor *self) {
   return NO;
 }
 
-- (NSString *)textFormatNameForValue:(int32_t)number {
-  if (nameOffsets_ == NULL) [self calcValueNameOffsets];
+- (BOOL)getValue:(int32_t *)outValue forEnumTextFormatName:(NSString *)textFormatName {
+    if (nameOffsets_ == NULL) [self calcValueNameOffsets];
+    if (nameOffsets_ == NULL) return NO;
 
+    for (uint32_t i = 0; i < valueCount_; ++i) {
+        NSString *valueTextFormatName = [self getEnumTextFormatNameForIndex:i];
+        if ([valueTextFormatName isEqual:textFormatName]) {
+            if (outValue) {
+                *outValue = values_[i];
+            }
+            return YES;
+        }
+    }
+    return NO;
+}
+
+- (NSString *)textFormatNameForValue:(int32_t)number {
   // Find the EnumValue descriptor and its index.
   BOOL foundIt = NO;
   uint32_t valueDescriptorIndex;
@@ -762,16 +913,41 @@ uint32_t GPBFieldAlternateTag(GPBFieldDescriptor *self) {
   if (!foundIt) {
     return nil;
   }
+  return [self getEnumTextFormatNameForIndex:valueDescriptorIndex];
+}
 
+- (uint32_t)enumNameCount {
+  return valueCount_;
+}
+
+- (NSString *)getEnumNameForIndex:(uint32_t)index {
+  if (nameOffsets_ == NULL) [self calcValueNameOffsets];
+  if (nameOffsets_ == NULL) return nil;
+
+  if (index >= valueCount_) {
+    return nil;
+  }
+  const char *valueName = valueNames_ + nameOffsets_[index];
+  NSString *fullName = [NSString stringWithFormat:@"%@_%s", name_, valueName];
+  return fullName;
+}
+
+- (NSString *)getEnumTextFormatNameForIndex:(uint32_t)index {
+  if (nameOffsets_ == NULL) [self calcValueNameOffsets];
+  if (nameOffsets_ == NULL) return nil;
+
+  if (index >= valueCount_) {
+    return nil;
+  }
   NSString *result = nil;
   // Naming adds an underscore between enum name and value name, skip that also.
-  const char *valueName = valueNames_ + nameOffsets_[valueDescriptorIndex];
+  const char *valueName = valueNames_ + nameOffsets_[index];
   NSString *shortName = @(valueName);
 
   // See if it is in the map of special format handling.
   if (extraTextFormatInfo_) {
     result = GPBDecodeTextFormatName(extraTextFormatInfo_,
-                                     (int32_t)valueDescriptorIndex, shortName);
+                                     (int32_t)index, shortName);
   }
   // Logic here needs to match what objectivec_enum.cc does in the proto
   // compiler.
@@ -796,35 +972,35 @@ uint32_t GPBFieldAlternateTag(GPBFieldDescriptor *self) {
   GPBGenericValue defaultValue_;
 }
 
-@synthesize containingMessageClass = containingMessageClass_;
-
-- (instancetype)initWithExtensionDescription:
-        (GPBExtensionDescription *)description {
+- (instancetype)initWithExtensionDescription:(GPBExtensionDescription *)desc
+                               usesClassRefs:(BOOL)usesClassRefs {
   if ((self = [super init])) {
-    description_ = description;
+    description_ = desc;
+    if (!usesClassRefs) {
+      // Legacy without class ref support.
+      const char *className = description_->messageOrGroupClass.name;
+      if (className) {
+        Class clazz = objc_lookUpClass(className);
+        NSAssert(clazz != Nil, @"Class %s not defined", className);
+        description_->messageOrGroupClass.clazz = clazz;
+      }
 
-#if DEBUG
-    const char *className = description->messageOrGroupClassName;
-    if (className) {
-      NSAssert(objc_lookUpClass(className) != Nil,
-               @"Class %s not defined", className);
-    }
-#endif
-
-    if (description->extendedClass) {
-      Class containingClass = objc_lookUpClass(description->extendedClass);
-      NSAssert(containingClass, @"Class %s not defined",
-               description->extendedClass);
-      containingMessageClass_ = containingClass;
+      const char *extendedClassName = description_->extendedClass.name;
+      if (extendedClassName) {
+        Class clazz = objc_lookUpClass(extendedClassName);
+        NSAssert(clazz, @"Class %s not defined", extendedClassName);
+        description_->extendedClass.clazz = clazz;
+      }
     }
 
     GPBDataType type = description_->dataType;
     if (type == GPBDataTypeBytes) {
       // Data stored as a length prefixed c-string in descriptor records.
       const uint8_t *bytes =
-          (const uint8_t *)description->defaultValue.valueData;
+          (const uint8_t *)description_->defaultValue.valueData;
       if (bytes) {
-        uint32_t length = *((uint32_t *)bytes);
+        uint32_t length;
+        memcpy(&length, bytes, sizeof(length));
         // The length is stored in network byte order.
         length = ntohl(length);
         bytes += sizeof(length);
@@ -836,10 +1012,14 @@ uint32_t GPBFieldAlternateTag(GPBFieldDescriptor *self) {
       // aren't common, we avoid the hit startup hit and it avoid initialization
       // order issues.
     } else {
-      defaultValue_ = description->defaultValue;
+      defaultValue_ = description_->defaultValue;
     }
   }
   return self;
+}
+
+- (instancetype)initWithExtensionDescription:(GPBExtensionDescription *)desc {
+  return [self initWithExtensionDescription:desc usesClassRefs:NO];
 }
 
 - (void)dealloc {
@@ -857,7 +1037,7 @@ uint32_t GPBFieldAlternateTag(GPBFieldDescriptor *self) {
 }
 
 - (NSString *)singletonName {
-  return @(description_->singletonName);
+  return (NSString * _Nonnull)@(description_->singletonName);
 }
 
 - (const char *)singletonNameC {
@@ -888,16 +1068,16 @@ uint32_t GPBFieldAlternateTag(GPBFieldDescriptor *self) {
   return GPBExtensionIsRepeated(description_);
 }
 
-- (BOOL)isMap {
-  return (description_->options & GPBFieldMapKeyMask) != 0;
-}
-
 - (BOOL)isPackable {
   return GPBExtensionIsPacked(description_);
 }
 
 - (Class)msgClass {
-  return objc_getClass(description_->messageOrGroupClassName);
+  return description_->messageOrGroupClass.clazz;
+}
+
+- (Class)containingMessageClass {
+  return description_->extendedClass.clazz;
 }
 
 - (GPBEnumDescriptor *)enumDescriptor {
@@ -961,3 +1141,5 @@ uint32_t GPBFieldAlternateTag(GPBFieldDescriptor *self) {
 }
 
 @end
+
+#pragma clang diagnostic pop
