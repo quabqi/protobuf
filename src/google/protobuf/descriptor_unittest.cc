@@ -38,12 +38,12 @@
 #include <memory>
 #include <vector>
 
+#include <google/protobuf/any.pb.h>
 #include <google/protobuf/compiler/importer.h>
 #include <google/protobuf/compiler/parser.h>
 #include <google/protobuf/unittest.pb.h>
 #include <google/protobuf/unittest_custom_options.pb.h>
 #include <google/protobuf/stubs/common.h>
-#include <google/protobuf/stubs/logging.h>
 #include <google/protobuf/stubs/logging.h>
 #include <google/protobuf/stubs/stringprintf.h>
 #include <google/protobuf/unittest_lazy_dependencies.pb.h>
@@ -56,8 +56,10 @@
 #include <google/protobuf/dynamic_message.h>
 #include <google/protobuf/text_format.h>
 #include <google/protobuf/stubs/strutil.h>
+#include <gmock/gmock.h>
 #include <google/protobuf/testing/googletest.h>
 #include <gtest/gtest.h>
+#include <google/protobuf/stubs/logging.h>
 #include <google/protobuf/stubs/substitute.h>
 
 
@@ -204,7 +206,7 @@ class MockErrorCollector : public DescriptorPool::ErrorCollector {
   // implements ErrorCollector ---------------------------------------
   void AddError(const std::string& filename, const std::string& element_name,
                 const Message* descriptor, ErrorLocation location,
-                const std::string& message) {
+                const std::string& message) override {
     const char* location_name = nullptr;
     switch (location) {
       case NAME:
@@ -249,7 +251,7 @@ class MockErrorCollector : public DescriptorPool::ErrorCollector {
   // implements ErrorCollector ---------------------------------------
   void AddWarning(const std::string& filename, const std::string& element_name,
                   const Message* descriptor, ErrorLocation location,
-                  const std::string& message) {
+                  const std::string& message) override {
     const char* location_name = nullptr;
     switch (location) {
       case NAME:
@@ -287,9 +289,8 @@ class MockErrorCollector : public DescriptorPool::ErrorCollector {
         break;
     }
 
-    strings::SubstituteAndAppend(&warning_text_, "$0: $1: $2: $3\n",
-                                       filename, element_name, location_name,
-                                       message);
+    strings::SubstituteAndAppend(&warning_text_, "$0: $1: $2: $3\n", filename,
+                              element_name, location_name, message);
   }
 };
 
@@ -298,7 +299,7 @@ class MockErrorCollector : public DescriptorPool::ErrorCollector {
 // Test simple files.
 class FileDescriptorTest : public testing::Test {
  protected:
-  virtual void SetUp() {
+  void SetUp() override {
     // Build descriptors for the following definitions:
     //
     //   // in "foo.proto"
@@ -479,7 +480,7 @@ TEST_F(FileDescriptorTest, FindExtensionByNumber) {
 
 
 TEST_F(FileDescriptorTest, BuildAgain) {
-  // Test that if te call BuildFile again on the same input we get the same
+  // Test that if we call BuildFile again on the same input we get the same
   // FileDescriptor back.
   FileDescriptorProto file;
   foo_file_->CopyTo(&file);
@@ -564,7 +565,7 @@ void ExtractDebugString(
 class SimpleErrorCollector : public io::ErrorCollector {
  public:
   // implements ErrorCollector ---------------------------------------
-  void AddError(int line, int column, const std::string& message) {
+  void AddError(int line, int column, const std::string& message) override {
     last_error_ = StringPrintf("%d:%d:", line, column) + message;
   }
 
@@ -613,7 +614,7 @@ TEST_F(FileDescriptorTest, DebugStringRoundTrip) {
 // Test simple flat messages and fields.
 class DescriptorTest : public testing::Test {
  protected:
-  virtual void SetUp() {
+  void SetUp() override {
     // Build descriptors for the following definitions:
     //
     //   // in "foo.proto"
@@ -723,6 +724,8 @@ class DescriptorTest : public testing::Test {
     AddField(message4, "field_name6", 6, FieldDescriptorProto::LABEL_OPTIONAL,
              FieldDescriptorProto::TYPE_INT32)
         ->set_json_name("@type");
+    AddField(message4, "fieldname7", 7, FieldDescriptorProto::LABEL_OPTIONAL,
+             FieldDescriptorProto::TYPE_INT32);
 
     // Build the descriptors and get the pointers.
     foo_file_ = pool_.BuildFile(foo_file);
@@ -812,6 +815,46 @@ TEST_F(DescriptorTest, Name) {
 TEST_F(DescriptorTest, ContainingType) {
   EXPECT_TRUE(message_->containing_type() == nullptr);
   EXPECT_TRUE(message2_->containing_type() == nullptr);
+}
+
+TEST_F(DescriptorTest, FieldNamesDedup) {
+  const auto collect_unique_names = [](const FieldDescriptor* field) {
+    std::set<std::string> names{field->name(), field->lowercase_name(),
+                                field->camelcase_name(), field->json_name()};
+    // Verify that we have the same number of string objects as we have string
+    // values. That is, duplicate names use the same std::string object.
+    // This is for memory efficiency.
+    EXPECT_EQ(names.size(), (std::set<const std::string*>{
+                                &field->name(), &field->lowercase_name(),
+                                &field->camelcase_name(), &field->json_name()}
+                                 .size()))
+        << testing::PrintToString(names);
+    return names;
+  };
+
+  using testing::ElementsAre;
+  // field_name1
+  EXPECT_THAT(collect_unique_names(message4_->field(0)),
+              ElementsAre("fieldName1", "field_name1"));
+  // fieldName2
+  EXPECT_THAT(collect_unique_names(message4_->field(1)),
+              ElementsAre("fieldName2", "fieldname2"));
+  // FieldName3
+  EXPECT_THAT(collect_unique_names(message4_->field(2)),
+              ElementsAre("FieldName3", "fieldName3", "fieldname3"));
+  // _field_name4
+  EXPECT_THAT(collect_unique_names(message4_->field(3)),
+              ElementsAre("FieldName4", "_field_name4", "fieldName4"));
+  // FIELD_NAME5
+  EXPECT_THAT(
+      collect_unique_names(message4_->field(4)),
+      ElementsAre("FIELDNAME5", "FIELD_NAME5", "fIELDNAME5", "field_name5"));
+  // field_name6, with json name @type
+  EXPECT_THAT(collect_unique_names(message4_->field(5)),
+              ElementsAre("@type", "fieldName6", "field_name6"));
+  // fieldname7
+  EXPECT_THAT(collect_unique_names(message4_->field(6)),
+              ElementsAre("fieldname7"));
 }
 
 TEST_F(DescriptorTest, FieldsByIndex) {
@@ -913,33 +956,36 @@ TEST_F(DescriptorTest, FieldJsonName) {
 
   DescriptorProto proto;
   message4_->CopyTo(&proto);
-  ASSERT_EQ(6, proto.field_size());
+  ASSERT_EQ(7, proto.field_size());
   EXPECT_FALSE(proto.field(0).has_json_name());
   EXPECT_FALSE(proto.field(1).has_json_name());
   EXPECT_FALSE(proto.field(2).has_json_name());
   EXPECT_FALSE(proto.field(3).has_json_name());
   EXPECT_FALSE(proto.field(4).has_json_name());
   EXPECT_EQ("@type", proto.field(5).json_name());
+  EXPECT_FALSE(proto.field(6).has_json_name());
 
   proto.Clear();
   CopyWithJsonName(message4_, &proto);
-  ASSERT_EQ(6, proto.field_size());
+  ASSERT_EQ(7, proto.field_size());
   EXPECT_EQ("fieldName1", proto.field(0).json_name());
   EXPECT_EQ("fieldName2", proto.field(1).json_name());
   EXPECT_EQ("FieldName3", proto.field(2).json_name());
   EXPECT_EQ("FieldName4", proto.field(3).json_name());
   EXPECT_EQ("FIELDNAME5", proto.field(4).json_name());
   EXPECT_EQ("@type", proto.field(5).json_name());
+  EXPECT_EQ("fieldname7", proto.field(6).json_name());
 
   // Test generated descriptor.
   const Descriptor* generated = protobuf_unittest::TestJsonName::descriptor();
-  ASSERT_EQ(6, generated->field_count());
+  ASSERT_EQ(7, generated->field_count());
   EXPECT_EQ("fieldName1", generated->field(0)->json_name());
   EXPECT_EQ("fieldName2", generated->field(1)->json_name());
   EXPECT_EQ("FieldName3", generated->field(2)->json_name());
   EXPECT_EQ("FieldName4", generated->field(3)->json_name());
   EXPECT_EQ("FIELDNAME5", generated->field(4)->json_name());
   EXPECT_EQ("@type", generated->field(5)->json_name());
+  EXPECT_EQ("fieldname7", generated->field(6)->json_name());
 }
 
 TEST_F(DescriptorTest, FieldFile) {
@@ -999,6 +1045,22 @@ TEST_F(DescriptorTest, IsMap) {
   EXPECT_TRUE(map_->message_type()->options().map_entry());
 }
 
+TEST_F(DescriptorTest, GetMap) {
+  const Descriptor* map_desc = map_->message_type();
+  const FieldDescriptor* map_key = map_desc->map_key();
+  ASSERT_TRUE(map_key != nullptr);
+  EXPECT_EQ(map_key->name(), "key");
+  EXPECT_EQ(map_key->number(), 1);
+
+  const FieldDescriptor* map_value = map_desc->map_value();
+  ASSERT_TRUE(map_value != nullptr);
+  EXPECT_EQ(map_value->name(), "value");
+  EXPECT_EQ(map_value->number(), 2);
+
+  EXPECT_EQ(message_->map_key(), nullptr);
+  EXPECT_EQ(message_->map_value(), nullptr);
+}
+
 TEST_F(DescriptorTest, FieldHasDefault) {
   EXPECT_FALSE(foo_->has_default_value());
   EXPECT_FALSE(bar_->has_default_value());
@@ -1039,7 +1101,7 @@ TEST_F(DescriptorTest, FieldEnumType) {
 // Test simple flat messages and fields.
 class OneofDescriptorTest : public testing::Test {
  protected:
-  virtual void SetUp() {
+  void SetUp() override {
     // Build descriptors for the following definitions:
     //
     //   package garply;
@@ -1130,7 +1192,7 @@ TEST_F(OneofDescriptorTest, FindByName) {
 
 class StylizedFieldNamesTest : public testing::Test {
  protected:
-  void SetUp() {
+  void SetUp() override {
     FileDescriptorProto file;
     file.set_name("foo.proto");
 
@@ -1299,7 +1361,7 @@ TEST_F(StylizedFieldNamesTest, FindByCamelcaseName) {
 // Test enum descriptors.
 class EnumDescriptorTest : public testing::Test {
  protected:
-  virtual void SetUp() {
+  void SetUp() override {
     // Build descriptors for the following definitions:
     //
     //   // in "foo.proto"
@@ -1450,7 +1512,7 @@ TEST_F(EnumDescriptorTest, ValueType) {
 // Test service descriptors.
 class ServiceDescriptorTest : public testing::Test {
  protected:
-  virtual void SetUp() {
+  void SetUp() override {
     // Build descriptors for the following messages and service:
     //    // in "foo.proto"
     //    message FooRequest  {}
@@ -1611,7 +1673,7 @@ TEST_F(ServiceDescriptorTest, MethodOutputType) {
 // Test nested types.
 class NestedDescriptorTest : public testing::Test {
  protected:
-  virtual void SetUp() {
+  void SetUp() override {
     // Build descriptors for the following definitions:
     //
     //   // in "foo.proto"
@@ -1825,7 +1887,7 @@ TEST_F(NestedDescriptorTest, FindEnumValueByName) {
 // Test extensions.
 class ExtensionDescriptorTest : public testing::Test {
  protected:
-  virtual void SetUp() {
+  void SetUp() override {
     // Build descriptors for the following definitions:
     //
     //   enum Baz {}
@@ -1835,12 +1897,18 @@ class ExtensionDescriptorTest : public testing::Test {
     //     extensions 10 to 19;
     //     extensions 30 to 39;
     //   }
-    //   extends Foo with optional int32 foo_int32 = 10;
-    //   extends Foo with repeated TestEnum foo_enum = 19;
+    //   extend Foo {
+    //     optional int32 foo_int32 = 10;
+    //   }
+    //   extend Foo {
+    //     repeated TestEnum foo_enum = 19;
+    //   }
     //   message Bar {
-    //     extends Foo with optional Qux foo_message = 30;
-    //     // (using Qux as the group type)
-    //     extends Foo with repeated group foo_group = 39;
+    //     optional int32 non_ext_int32 = 1;
+    //     extend Foo {
+    //       optional Qux foo_message = 30;
+    //       repeated Qux foo_group = 39;  // (but internally set to TYPE_GROUP)
+    //     }
     //   }
 
     FileDescriptorProto foo_file;
@@ -1862,6 +1930,8 @@ class ExtensionDescriptorTest : public testing::Test {
         ->set_type_name("Baz");
 
     DescriptorProto* bar = AddMessage(&foo_file, "Bar");
+    AddField(bar, "non_ext_int32", 1, FieldDescriptorProto::LABEL_OPTIONAL,
+             FieldDescriptorProto::TYPE_INT32);
     AddNestedExtension(bar, "Foo", "foo_message", 30,
                        FieldDescriptorProto::LABEL_OPTIONAL,
                        FieldDescriptorProto::TYPE_MESSAGE)
@@ -1974,6 +2044,15 @@ TEST_F(ExtensionDescriptorTest, FindExtensionByName) {
   EXPECT_TRUE(foo_->FindExtensionByName("foo_message") == nullptr);
 }
 
+TEST_F(ExtensionDescriptorTest, FieldVsExtension) {
+  EXPECT_EQ(foo_->FindFieldByName("foo_message"), nullptr);
+  EXPECT_EQ(bar_->FindFieldByName("foo_message"), nullptr);
+  EXPECT_NE(bar_->FindFieldByName("non_ext_int32"), nullptr);
+  EXPECT_EQ(foo_->FindExtensionByName("foo_message"), nullptr);
+  EXPECT_NE(bar_->FindExtensionByName("foo_message"), nullptr);
+  EXPECT_EQ(bar_->FindExtensionByName("non_ext_int32"), nullptr);
+}
+
 TEST_F(ExtensionDescriptorTest, FindExtensionByPrintableName) {
   EXPECT_TRUE(pool_.FindExtensionByPrintableName(foo_, "no_such_extension") ==
               nullptr);
@@ -2050,10 +2129,88 @@ TEST_F(ExtensionDescriptorTest, DuplicateFieldNumber) {
 
 // ===================================================================
 
+// Ensure that overlapping extension ranges are not allowed.
+TEST(OverlappingExtensionRangeTest, ExtensionRangeInternal) {
+  // Build descriptors for the following definitions:
+  //
+  //   message Foo {
+  //     extensions 10 to 19;
+  //     extensions 15;
+  //   }
+  FileDescriptorProto foo_file;
+  foo_file.set_name("foo.proto");
+
+  DescriptorProto* foo = AddMessage(&foo_file, "Foo");
+  AddExtensionRange(foo, 10, 20);
+  AddExtensionRange(foo, 15, 16);
+
+  DescriptorPool pool;
+  MockErrorCollector error_collector;
+  // The extensions ranges are invalid, so the proto shouldn't build.
+  ASSERT_TRUE(pool.BuildFileCollectingErrors(foo_file, &error_collector) ==
+              nullptr);
+  ASSERT_EQ(
+      "foo.proto: Foo: NUMBER: Extension range 15 to 15 overlaps with "
+      "already-defined range 10 to 19.\n",
+      error_collector.text_);
+}
+
+TEST(OverlappingExtensionRangeTest, ExtensionRangeAfter) {
+  // Build descriptors for the following definitions:
+  //
+  //   message Foo {
+  //     extensions 10 to 19;
+  //     extensions 15 to 24;
+  //   }
+  FileDescriptorProto foo_file;
+  foo_file.set_name("foo.proto");
+
+  DescriptorProto* foo = AddMessage(&foo_file, "Foo");
+  AddExtensionRange(foo, 10, 20);
+  AddExtensionRange(foo, 15, 25);
+
+  DescriptorPool pool;
+  MockErrorCollector error_collector;
+  // The extensions ranges are invalid, so the proto shouldn't build.
+  ASSERT_TRUE(pool.BuildFileCollectingErrors(foo_file, &error_collector) ==
+              nullptr);
+  ASSERT_EQ(
+      "foo.proto: Foo: NUMBER: Extension range 15 to 24 overlaps with "
+      "already-defined range 10 to 19.\n",
+      error_collector.text_);
+}
+
+TEST(OverlappingExtensionRangeTest, ExtensionRangeBefore) {
+  // Build descriptors for the following definitions:
+  //
+  //   message Foo {
+  //     extensions 10 to 19;
+  //     extensions 5 to 14;
+  //   }
+  FileDescriptorProto foo_file;
+  foo_file.set_name("foo.proto");
+
+  DescriptorProto* foo = AddMessage(&foo_file, "Foo");
+  AddExtensionRange(foo, 10, 20);
+  AddExtensionRange(foo, 5, 15);
+
+  DescriptorPool pool;
+  MockErrorCollector error_collector;
+  // The extensions ranges are invalid, so the proto shouldn't build.
+  ASSERT_TRUE(pool.BuildFileCollectingErrors(foo_file, &error_collector) ==
+              nullptr);
+  ASSERT_EQ(
+      "foo.proto: Foo: NUMBER: Extension range 5 to 14 overlaps with "
+      "already-defined range 10 to 19.\n",
+      error_collector.text_);
+}
+
+// ===================================================================
+
 // Test reserved fields.
 class ReservedDescriptorTest : public testing::Test {
  protected:
-  virtual void SetUp() {
+  void SetUp() override {
     // Build descriptors for the following definitions:
     //
     //   message Foo {
@@ -2131,7 +2288,7 @@ TEST_F(ReservedDescriptorTest, IsReservedName) {
 // Test reserved enum fields.
 class ReservedEnumDescriptorTest : public testing::Test {
  protected:
-  virtual void SetUp() {
+  void SetUp() override {
     // Build descriptors for the following definitions:
     //
     //   enum Foo {
@@ -2576,11 +2733,9 @@ TEST_F(MiscTest, DefaultValues) {
   ASSERT_TRUE(message->field(10)->has_default_value());
 
   EXPECT_EQ(-1, message->field(0)->default_value_int32());
-  EXPECT_EQ(-PROTOBUF_ULONGLONG(1000000000000),
-            message->field(1)->default_value_int64());
+  EXPECT_EQ(int64{-1000000000000}, message->field(1)->default_value_int64());
   EXPECT_EQ(42, message->field(2)->default_value_uint32());
-  EXPECT_EQ(PROTOBUF_ULONGLONG(2000000000000),
-            message->field(3)->default_value_uint64());
+  EXPECT_EQ(uint64{2000000000000}, message->field(3)->default_value_uint64());
   EXPECT_EQ(4.5, message->field(4)->default_value_float());
   EXPECT_EQ(10e100, message->field(5)->default_value_double());
   EXPECT_TRUE(message->field(6)->default_value_bool());
@@ -2659,7 +2814,7 @@ class AllowUnknownDependenciesTest
   DescriptorPoolMode mode() { return std::get<0>(GetParam()); }
   const char* syntax() { return std::get<1>(GetParam()); }
 
-  virtual void SetUp() {
+  void SetUp() override {
     FileDescriptorProto foo_proto, bar_proto;
 
     switch (mode()) {
@@ -2993,11 +3148,11 @@ TEST(CustomOptions, OptionLocations) {
       file->FindServiceByName("TestServiceWithCustomOptions");
   const MethodDescriptor* method = service->FindMethodByName("Foo");
 
-  EXPECT_EQ(PROTOBUF_LONGLONG(9876543210),
+  EXPECT_EQ(int64{9876543210},
             file->options().GetExtension(protobuf_unittest::file_opt1));
   EXPECT_EQ(-56,
             message->options().GetExtension(protobuf_unittest::message_opt1));
-  EXPECT_EQ(PROTOBUF_LONGLONG(8765432109),
+  EXPECT_EQ(int64{8765432109},
             field->options().GetExtension(protobuf_unittest::field_opt1));
   EXPECT_EQ(42,  // Check that we get the default for an option we don't set.
             field->options().GetExtension(protobuf_unittest::field_opt2));
@@ -3005,7 +3160,7 @@ TEST(CustomOptions, OptionLocations) {
   EXPECT_EQ(-789, enm->options().GetExtension(protobuf_unittest::enum_opt1));
   EXPECT_EQ(123, enm->value(1)->options().GetExtension(
                      protobuf_unittest::enum_value_opt1));
-  EXPECT_EQ(PROTOBUF_LONGLONG(-9876543210),
+  EXPECT_EQ(int64{-9876543210},
             service->options().GetExtension(protobuf_unittest::service_opt1));
   EXPECT_EQ(protobuf_unittest::METHODOPT1_VAL2,
             method->options().GetExtension(protobuf_unittest::method_opt1));
@@ -3017,6 +3172,13 @@ TEST(CustomOptions, OptionLocations) {
 
 TEST(CustomOptions, OptionTypes) {
   const MessageOptions* options = nullptr;
+
+  constexpr int32_t kint32min = std::numeric_limits<int32_t>::min();
+  constexpr int32_t kint32max = std::numeric_limits<int32_t>::max();
+  constexpr uint32_t kuint32max = std::numeric_limits<uint32_t>::max();
+  constexpr int64_t kint64min = std::numeric_limits<int64_t>::min();
+  constexpr int64_t kint64max = std::numeric_limits<int64_t>::max();
+  constexpr uint64_t kuint64max = std::numeric_limits<uint64_t>::max();
 
   options =
       &protobuf_unittest::CustomOptionMinIntegerValues::descriptor()->options();
@@ -3134,6 +3296,11 @@ TEST(CustomOptions, OptionsFromOtherFile) {
   FileDescriptorProto::descriptor()->file()->CopyTo(&file_proto);
   ASSERT_TRUE(pool.BuildFile(file_proto) != nullptr);
 
+  // We have to import the Any dependency.
+  FileDescriptorProto any_proto;
+  google::protobuf::Any::descriptor()->file()->CopyTo(&any_proto);
+  ASSERT_TRUE(pool.BuildFile(any_proto) != nullptr);
+
   protobuf_unittest::TestMessageWithCustomOptions::descriptor()->file()->CopyTo(
       &file_proto);
   ASSERT_TRUE(pool.BuildFile(file_proto) != nullptr);
@@ -3191,6 +3358,10 @@ TEST(CustomOptions, MessageOptionThreeFieldsSet) {
   FileDescriptorProto file_proto;
   FileDescriptorProto::descriptor()->file()->CopyTo(&file_proto);
   ASSERT_TRUE(pool.BuildFile(file_proto) != nullptr);
+
+  FileDescriptorProto any_proto;
+  google::protobuf::Any::descriptor()->file()->CopyTo(&any_proto);
+  ASSERT_TRUE(pool.BuildFile(any_proto) != nullptr);
 
   protobuf_unittest::TestMessageWithCustomOptions::descriptor()->file()->CopyTo(
       &file_proto);
@@ -3268,6 +3439,10 @@ TEST(CustomOptions, MessageOptionRepeatedLeafFieldSet) {
   FileDescriptorProto file_proto;
   FileDescriptorProto::descriptor()->file()->CopyTo(&file_proto);
   ASSERT_TRUE(pool.BuildFile(file_proto) != nullptr);
+
+  FileDescriptorProto any_proto;
+  google::protobuf::Any::descriptor()->file()->CopyTo(&any_proto);
+  ASSERT_TRUE(pool.BuildFile(any_proto) != nullptr);
 
   protobuf_unittest::TestMessageWithCustomOptions::descriptor()->file()->CopyTo(
       &file_proto);
@@ -3348,6 +3523,10 @@ TEST(CustomOptions, MessageOptionRepeatedMsgFieldSet) {
   FileDescriptorProto file_proto;
   FileDescriptorProto::descriptor()->file()->CopyTo(&file_proto);
   ASSERT_TRUE(pool.BuildFile(file_proto) != nullptr);
+
+  FileDescriptorProto any_proto;
+  google::protobuf::Any::descriptor()->file()->CopyTo(&any_proto);
+  ASSERT_TRUE(pool.BuildFile(any_proto) != nullptr);
 
   protobuf_unittest::TestMessageWithCustomOptions::descriptor()->file()->CopyTo(
       &file_proto);
@@ -3449,6 +3628,10 @@ TEST(CustomOptions, AggregateOptions) {
                                   message_set_extension)
                 .s());
 
+  protobuf_unittest::AggregateMessageSetElement any_payload;
+  ASSERT_TRUE(file_options.any().UnpackTo(&any_payload));
+  EXPECT_EQ("EmbeddedMessageSetElement", any_payload.s());
+
   // Simple tests for all the other types of annotations
   EXPECT_EQ("MessageAnnotation",
             msg->options().GetExtension(protobuf_unittest::msgopt).s());
@@ -3470,6 +3653,10 @@ TEST(CustomOptions, UnusedImportError) {
   FileDescriptorProto file_proto;
   FileDescriptorProto::descriptor()->file()->CopyTo(&file_proto);
   ASSERT_TRUE(pool.BuildFile(file_proto) != nullptr);
+
+  FileDescriptorProto any_proto;
+  google::protobuf::Any::descriptor()->file()->CopyTo(&any_proto);
+  ASSERT_TRUE(pool.BuildFile(any_proto) != nullptr);
 
   protobuf_unittest::TestMessageWithCustomOptions::descriptor()->file()->CopyTo(
       &file_proto);
@@ -3772,6 +3959,45 @@ TEST_F(ValidationErrorTest, InvalidPackageName) {
       "foo.proto: foo.$: NAME: \"$\" is not a valid identifier.\n");
 }
 
+// 'str' is a static C-style string that may contain '\0'
+#define STATIC_STR(str) std::string((str), sizeof(str) - 1)
+
+TEST_F(ValidationErrorTest, NullCharSymbolName) {
+  BuildFileWithErrors(
+      "name: \"bar.proto\" "
+      "package: \"foo\""
+      "message_type { "
+      "  name: '\\000\\001\\013.Bar' "
+      "  field { name: \"foo\" number:  9 label:LABEL_OPTIONAL type:TYPE_INT32 "
+      "} "
+      "}",
+      STATIC_STR("bar.proto: foo.\0\x1\v.Bar: NAME: \"\0\x1\v.Bar\" is not a "
+                 "valid identifier.\nbar.proto: foo.\0\x1\v.Bar: NAME: "
+                 "\"\0\x1\v.Bar\" is not a valid identifier.\nbar.proto: "
+                 "foo.\0\x1\v.Bar: NAME: \"\0\x1\v.Bar\" is not a valid "
+                 "identifier.\nbar.proto: foo.\0\x1\v.Bar: NAME: "
+                 "\"\0\x1\v.Bar\" is not a valid identifier.\nbar.proto: "
+                 "foo.\0\x1\v.Bar.foo: NAME: \"foo.\0\x1\v.Bar.foo\" contains "
+                 "null character.\nbar.proto: foo.\0\x1\v.Bar: NAME: "
+                 "\"foo.\0\x1\v.Bar\" contains null character.\n"));
+}
+
+TEST_F(ValidationErrorTest, NullCharFileName) {
+  BuildFileWithErrors(
+      "name: \"bar\\000\\001\\013.proto\" "
+      "package: \"outer.foo\"",
+      STATIC_STR("bar\0\x1\v.proto: bar\0\x1\v.proto: NAME: "
+                 "\"bar\0\x1\v.proto\" contains null character.\n"));
+}
+
+TEST_F(ValidationErrorTest, NullCharPackageName) {
+  BuildFileWithErrors(
+      "name: \"bar.proto\" "
+      "package: \"\\000\\001\\013.\"",
+      STATIC_STR("bar.proto: \0\x1\v.: NAME: \"\0\x1\v.\" contains null "
+                 "character.\n"));
+}
+
 TEST_F(ValidationErrorTest, MissingFileName) {
   BuildFileWithErrors("",
 
@@ -3983,6 +4209,32 @@ TEST_F(ValidationErrorTest, ReservedFieldsDebugString) {
       "message Foo {\n"
       "  reserved 5, 10 to 19;\n"
       "  reserved \"foo\", \"bar\";\n"
+      "}\n\n",
+      file->DebugString());
+}
+
+TEST_F(ValidationErrorTest, DebugStringReservedRangeMax) {
+  const FileDescriptor* file = BuildFile(strings::Substitute(
+      "name: \"foo.proto\" "
+      "enum_type { "
+      "  name: \"Bar\""
+      "  value { name:\"BAR\" number:1 }"
+      "  reserved_range { start: 5 end: $0 }"
+      "}"
+      "message_type {"
+      "  name: \"Foo\""
+      "  reserved_range { start: 5 end: $1 }"
+      "}",
+      std::numeric_limits<int>::max(), FieldDescriptor::kMaxNumber + 1));
+
+  ASSERT_EQ(
+      "syntax = \"proto2\";\n\n"
+      "enum Bar {\n"
+      "  BAR = 1;\n"
+      "  reserved 5 to max;\n"
+      "}\n\n"
+      "message Foo {\n"
+      "  reserved 5 to max;\n"
       "}\n\n",
       file->DebugString());
 }
@@ -6547,7 +6799,7 @@ class DatabaseBackedPoolTest : public testing::Test {
 
   SimpleDescriptorDatabase database_;
 
-  virtual void SetUp() {
+  void SetUp() override {
     AddToDatabase(
         &database_,
         "name: 'foo.proto' "
@@ -6579,7 +6831,7 @@ class DatabaseBackedPoolTest : public testing::Test {
 
     // implements DescriptorDatabase ---------------------------------
     bool FindFileByName(const std::string& filename,
-                        FileDescriptorProto* output) {
+                        FileDescriptorProto* output) override {
       // error.proto and error2.proto cyclically import each other.
       if (filename == "error.proto") {
         output->Clear();
@@ -6596,12 +6848,12 @@ class DatabaseBackedPoolTest : public testing::Test {
       }
     }
     bool FindFileContainingSymbol(const std::string& symbol_name,
-                                  FileDescriptorProto* output) {
+                                  FileDescriptorProto* output) override {
       return false;
     }
     bool FindFileContainingExtension(const std::string& containing_type,
                                      int field_number,
-                                     FileDescriptorProto* output) {
+                                     FileDescriptorProto* output) override {
       return false;
     }
   };
@@ -6624,18 +6876,18 @@ class DatabaseBackedPoolTest : public testing::Test {
 
     // implements DescriptorDatabase ---------------------------------
     bool FindFileByName(const std::string& filename,
-                        FileDescriptorProto* output) {
+                        FileDescriptorProto* output) override {
       ++call_count_;
       return wrapped_db_->FindFileByName(filename, output);
     }
     bool FindFileContainingSymbol(const std::string& symbol_name,
-                                  FileDescriptorProto* output) {
+                                  FileDescriptorProto* output) override {
       ++call_count_;
       return wrapped_db_->FindFileContainingSymbol(symbol_name, output);
     }
     bool FindFileContainingExtension(const std::string& containing_type,
                                      int field_number,
-                                     FileDescriptorProto* output) {
+                                     FileDescriptorProto* output) override {
       ++call_count_;
       return wrapped_db_->FindFileContainingExtension(containing_type,
                                                       field_number, output);
@@ -6655,16 +6907,16 @@ class DatabaseBackedPoolTest : public testing::Test {
 
     // implements DescriptorDatabase ---------------------------------
     bool FindFileByName(const std::string& filename,
-                        FileDescriptorProto* output) {
+                        FileDescriptorProto* output) override {
       return wrapped_db_->FindFileByName(filename, output);
     }
     bool FindFileContainingSymbol(const std::string& symbol_name,
-                                  FileDescriptorProto* output) {
+                                  FileDescriptorProto* output) override {
       return FindFileByName("foo.proto", output);
     }
     bool FindFileContainingExtension(const std::string& containing_type,
                                      int field_number,
-                                     FileDescriptorProto* output) {
+                                     FileDescriptorProto* output) override {
       return FindFileByName("foo.proto", output);
     }
   };
@@ -6940,7 +7192,7 @@ class ExponentialErrorDatabase : public DescriptorDatabase {
 
   // implements DescriptorDatabase ---------------------------------
   bool FindFileByName(const std::string& filename,
-                      FileDescriptorProto* output) {
+                      FileDescriptorProto* output) override {
     int file_num = -1;
     FullMatch(filename, "file", ".proto", &file_num);
     if (file_num > -1) {
@@ -6950,7 +7202,7 @@ class ExponentialErrorDatabase : public DescriptorDatabase {
     }
   }
   bool FindFileContainingSymbol(const std::string& symbol_name,
-                                FileDescriptorProto* output) {
+                                FileDescriptorProto* output) override {
     int file_num = -1;
     FullMatch(symbol_name, "Message", "", &file_num);
     if (file_num > 0) {
@@ -6961,7 +7213,7 @@ class ExponentialErrorDatabase : public DescriptorDatabase {
   }
   bool FindFileContainingExtension(const std::string& containing_type,
                                    int field_number,
-                                   FileDescriptorProto* output) {
+                                   FileDescriptorProto* output) override {
     return false;
   }
 
@@ -7044,10 +7296,9 @@ class AbortingErrorCollector : public DescriptorPool::ErrorCollector {
  public:
   AbortingErrorCollector() {}
 
-  virtual void AddError(const std::string& filename,
-                        const std::string& element_name, const Message* message,
-                        ErrorLocation location,
-                        const std::string& error_message) {
+  void AddError(const std::string& filename, const std::string& element_name,
+                const Message* message, ErrorLocation location,
+                const std::string& error_message) override {
     GOOGLE_LOG(FATAL) << "AddError() called unexpectedly: " << filename << " ["
                << element_name << "]: " << error_message;
   }
@@ -7062,7 +7313,7 @@ class SingletonSourceTree : public compiler::SourceTree {
   SingletonSourceTree(const std::string& filename, const std::string& contents)
       : filename_(filename), contents_(contents) {}
 
-  virtual io::ZeroCopyInputStream* Open(const std::string& filename) {
+  io::ZeroCopyInputStream* Open(const std::string& filename) override {
     return filename == filename_
                ? new io::ArrayInputStream(contents_.data(), contents_.size())
                : nullptr;
@@ -7168,8 +7419,8 @@ class SourceLocationTest : public testing::Test {
 
   static std::string PrintSourceLocation(const SourceLocation& loc) {
     return strings::Substitute("$0:$1-$2:$3", 1 + loc.start_line,
-                                     1 + loc.start_column, 1 + loc.end_line,
-                                     1 + loc.end_column);
+                            1 + loc.start_column, 1 + loc.end_line,
+                            1 + loc.end_column);
   }
 
  private:
@@ -7184,9 +7435,9 @@ class SourceLocationTest : public testing::Test {
   DescriptorPool pool_;
 
   // tag number of all custom options in above test file
-  static const int kCustomOptionFieldNumber = 10101;
+  static constexpr int kCustomOptionFieldNumber = 10101;
   // tag number of field "a" in message type "A" in above test file
-  static const int kAFieldNumber = 1;
+  static constexpr int kAFieldNumber = 1;
 };
 
 // TODO(adonovan): implement support for option fields and for
@@ -8071,3 +8322,5 @@ TEST_F(LazilyBuildDependenciesTest, Dependency) {
 }  // namespace descriptor_unittest
 }  // namespace protobuf
 }  // namespace google
+
+#include <google/protobuf/port_undef.inc>
