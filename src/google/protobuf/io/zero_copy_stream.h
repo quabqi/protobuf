@@ -107,12 +107,12 @@
 #ifndef GOOGLE_PROTOBUF_IO_ZERO_COPY_STREAM_H__
 #define GOOGLE_PROTOBUF_IO_ZERO_COPY_STREAM_H__
 
+#include "google/protobuf/stubs/common.h"
+#include "google/protobuf/port.h"
 
-#include <string>
 
-#include <google/protobuf/stubs/common.h>
-#include <google/protobuf/port_def.inc>
-
+// Must be included last.
+#include "google/protobuf/port_def.inc"
 
 namespace google {
 namespace protobuf {
@@ -127,6 +127,8 @@ class ZeroCopyOutputStream;
 class PROTOBUF_EXPORT ZeroCopyInputStream {
  public:
   ZeroCopyInputStream() {}
+  ZeroCopyInputStream(const ZeroCopyInputStream&) = delete;
+  ZeroCopyInputStream& operator=(const ZeroCopyInputStream&) = delete;
   virtual ~ZeroCopyInputStream() {}
 
   // Obtains a chunk of data from the stream.
@@ -154,6 +156,13 @@ class PROTOBUF_EXPORT ZeroCopyInputStream {
   // buffer that goes beyond what you wanted to read, you can use BackUp()
   // to return to the point where you intended to finish.
   //
+  // This method can be called with `count = 0` to finalize (flush) any
+  // previously returned buffer. For example, a file output stream can
+  // flush buffers returned from a previous call to Next() upon such
+  // BackUp(0) invocations. ZeroCopyOutputStream callers should always
+  // invoke BackUp() after a final Next() call, even if there is no
+  // excess buffer data to be backed up to indicate a flush point.
+  //
   // Preconditions:
   // * The last method called must have been Next().
   // * count must be less than or equal to the size of the last buffer
@@ -174,9 +183,6 @@ class PROTOBUF_EXPORT ZeroCopyInputStream {
   // Returns the total number of bytes read since this object was created.
   virtual int64_t ByteCount() const = 0;
 
-
- private:
-  GOOGLE_DISALLOW_EVIL_CONSTRUCTORS(ZeroCopyInputStream);
 };
 
 // Abstract interface similar to an output stream but designed to minimize
@@ -184,6 +190,8 @@ class PROTOBUF_EXPORT ZeroCopyInputStream {
 class PROTOBUF_EXPORT ZeroCopyOutputStream {
  public:
   ZeroCopyOutputStream() {}
+  ZeroCopyOutputStream(const ZeroCopyOutputStream&) = delete;
+  ZeroCopyOutputStream& operator=(const ZeroCopyOutputStream&) = delete;
   virtual ~ZeroCopyOutputStream() {}
 
   // Obtains a buffer into which data can be written.  Any data written
@@ -239,15 +247,12 @@ class PROTOBUF_EXPORT ZeroCopyOutputStream {
   virtual bool WriteAliasedRaw(const void* data, int size);
   virtual bool AllowsAliasing() const { return false; }
 
-
- private:
-  GOOGLE_DISALLOW_EVIL_CONSTRUCTORS(ZeroCopyOutputStream);
 };
 
 }  // namespace io
 }  // namespace protobuf
 }  // namespace google
 
-#include <google/protobuf/port_undef.inc>
+#include "google/protobuf/port_undef.inc"
 
 #endif  // GOOGLE_PROTOBUF_IO_ZERO_COPY_STREAM_H__

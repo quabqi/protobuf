@@ -36,5 +36,84 @@
 #ifndef GOOGLE_PROTOBUF_PORT_H__
 #define GOOGLE_PROTOBUF_PORT_H__
 
+#include <cassert>
+#include <cstddef>
+#include <new>
+#include <type_traits>
+
+
+// must be last
+#include "google/protobuf/port_def.inc"
+
+
+namespace google {
+namespace protobuf {
+namespace internal {
+
+
+inline void SizedDelete(void* p, size_t size) {
+#if defined(__cpp_sized_deallocation)
+  ::operator delete(p, size);
+#else
+  // Avoid -Wunused-parameter
+  (void)size;
+  ::operator delete(p);
+#endif
+}
+inline void SizedArrayDelete(void* p, size_t size) {
+#if defined(__cpp_sized_deallocation)
+  ::operator delete[](p, size);
+#else
+  // Avoid -Wunused-parameter
+  (void)size;
+  ::operator delete[](p);
+#endif
+}
+
+// Tag type used to invoke the constinit constructor overload of classes
+// such as ArenaStringPtr and MapFieldBase. Such constructors are internal
+// implementation details of the library.
+struct ConstantInitialized {
+  explicit ConstantInitialized() = default;
+};
+
+// Tag type used to invoke the arena constructor overload of classes such
+// as ExtensionSet and MapFieldLite in aggregate initialization. These
+// classes typically don't have move/copy constructors, which rules out
+// explicit initialization in pre-C++17.
+struct ArenaInitialized {
+  explicit ArenaInitialized() = default;
+};
+
+template <typename To, typename From>
+inline To DownCast(From* f) {
+  static_assert(
+      std::is_base_of<From, typename std::remove_pointer<To>::type>::value,
+      "illegal DownCast");
+
+#if PROTOBUF_RTTI
+  // RTTI: debug mode only!
+  assert(f == nullptr || dynamic_cast<To>(f) != nullptr);
+#endif
+  return static_cast<To>(f);
+}
+
+template <typename ToRef, typename From>
+inline ToRef DownCast(From& f) {
+  using To = typename std::remove_reference<ToRef>::type;
+  static_assert(std::is_base_of<From, To>::value, "illegal DownCast");
+
+#if PROTOBUF_RTTI
+  // RTTI: debug mode only!
+  assert(dynamic_cast<To*>(&f) != nullptr);
+#endif
+  return *static_cast<To*>(&f);
+}
+
+}  // namespace internal
+}  // namespace protobuf
+}  // namespace google
+
+#include "google/protobuf/port_undef.inc"
 
 #endif  // GOOGLE_PROTOBUF_PORT_H__

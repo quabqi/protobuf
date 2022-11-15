@@ -36,7 +36,7 @@
 #include <cstdint>
 #include <string>
 
-#include <google/protobuf/compiler/code_generator.h>
+#include "google/protobuf/compiler/code_generator.h"
 
 namespace google {
 namespace protobuf {
@@ -78,7 +78,7 @@ namespace compiler {
 class MockCodeGenerator : public CodeGenerator {
  public:
   MockCodeGenerator(const std::string& name);
-  virtual ~MockCodeGenerator();
+  ~MockCodeGenerator() override;
 
   // Expect (via gTest) that a MockCodeGenerator with the given name was called
   // with the given parameters by inspecting the output location.

@@ -31,6 +31,7 @@
 package com.google.protobuf;
 
 import java.lang.reflect.Method;
+import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.util.AbstractList;
@@ -54,6 +55,7 @@ public final class Internal {
 
   private Internal() {}
 
+  static final Charset US_ASCII = Charset.forName("US-ASCII");
   static final Charset UTF_8 = Charset.forName("UTF-8");
   static final Charset ISO_8859_1 = Charset.forName("ISO-8859-1");
 
@@ -138,10 +140,12 @@ public final class Internal {
     ByteBuffer temp = source.duplicate();
     // We want to copy all the data in the source ByteBuffer, not just the
     // remaining bytes.
-    temp.clear();
+    // View ByteBuffer as Buffer to avoid issue with covariant return types
+    // See https://issues.apache.org/jira/browse/MRESOLVER-85
+    ((Buffer) temp).clear();
     ByteBuffer result = ByteBuffer.allocate(temp.capacity());
     result.put(temp);
-    result.clear();
+    ((Buffer) result).clear();
     return result;
   }
 
@@ -255,7 +259,9 @@ public final class Internal {
 
   /** Helper method for implementing {@link Message#equals(Object)} for bytes field. */
   public static boolean equals(List<byte[]> a, List<byte[]> b) {
-    if (a.size() != b.size()) return false;
+    if (a.size() != b.size()) {
+      return false;
+    }
     for (int i = 0; i < a.size(); ++i) {
       if (!Arrays.equals(a.get(i), b.get(i))) {
         return false;
@@ -369,7 +375,6 @@ public final class Internal {
     }
   }
 
-
   /** An empty byte array constant used in generated code. */
   public static final byte[] EMPTY_BYTE_ARRAY = new byte[0];
 
@@ -379,7 +384,6 @@ public final class Internal {
   /** An empty coded input stream constant used in generated code. */
   public static final CodedInputStream EMPTY_CODED_INPUT_STREAM =
       CodedInputStream.newInstance(EMPTY_BYTE_ARRAY);
-
 
   /** Helper method to merge two MessageLite instances. */
   static Object mergeMessage(Object destination, Object source) {
@@ -449,7 +453,6 @@ public final class Internal {
       this.valueConverter = valueConverter;
     }
 
-    @SuppressWarnings("unchecked")
     @Override
     public V get(Object key) {
       RealValue result = realMap.get(key);
@@ -548,7 +551,6 @@ public final class Internal {
         if (!(o instanceof Map.Entry)) {
           return false;
         }
-        @SuppressWarnings("unchecked")
         Map.Entry<?, ?> other = (Map.Entry<?, ?>) o;
         return getKey().equals(other.getKey()) && getValue().equals(getValue());
       }
@@ -596,6 +598,7 @@ public final class Internal {
     void addInt(int element);
 
     /** Like {@link #set(int, Object)} but more efficient in that it doesn't box the element. */
+    @CanIgnoreReturnValue
     int setInt(int index, int element);
 
     /** Returns a mutable clone of this list with the specified capacity. */
@@ -616,6 +619,7 @@ public final class Internal {
     void addBoolean(boolean element);
 
     /** Like {@link #set(int, Object)} but more efficient in that it doesn't box the element. */
+    @CanIgnoreReturnValue
     boolean setBoolean(int index, boolean element);
 
     /** Returns a mutable clone of this list with the specified capacity. */
@@ -636,6 +640,7 @@ public final class Internal {
     void addLong(long element);
 
     /** Like {@link #set(int, Object)} but more efficient in that it doesn't box the element. */
+    @CanIgnoreReturnValue
     long setLong(int index, long element);
 
     /** Returns a mutable clone of this list with the specified capacity. */
@@ -656,6 +661,7 @@ public final class Internal {
     void addDouble(double element);
 
     /** Like {@link #set(int, Object)} but more efficient in that it doesn't box the element. */
+    @CanIgnoreReturnValue
     double setDouble(int index, double element);
 
     /** Returns a mutable clone of this list with the specified capacity. */
@@ -676,11 +682,11 @@ public final class Internal {
     void addFloat(float element);
 
     /** Like {@link #set(int, Object)} but more efficient in that it doesn't box the element. */
+    @CanIgnoreReturnValue
     float setFloat(int index, float element);
 
     /** Returns a mutable clone of this list with the specified capacity. */
     @Override
     FloatList mutableCopyWithCapacity(int capacity);
   }
-
 }

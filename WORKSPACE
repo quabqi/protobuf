@@ -9,95 +9,81 @@ local_repository(
 
 http_archive(
     name = "com_google_googletest",
-    sha256 = "9dc9157a9a1551ec7a7e43daea9a694a0bb5fb8bec81235d8a1e6ef64c716dcb",
-    strip_prefix = "googletest-release-1.10.0",
+    sha256 = "ea54c9845568cb31c03f2eddc7a40f7f83912d04ab977ff50ec33278119548dd",
+    strip_prefix = "googletest-4c9a3bb62bf3ba1f1010bf96f9c8ed767b363774",
     urls = [
-        "https://mirror.bazel.build/github.com/google/googletest/archive/release-1.10.0.tar.gz",
-        "https://github.com/google/googletest/archive/release-1.10.0.tar.gz",
+        "https://github.com/google/googletest/archive/4c9a3bb62bf3ba1f1010bf96f9c8ed767b363774.tar.gz",
     ],
 )
 
 http_archive(
-    name = "com_github_google_benchmark",
-    sha256 = "2a778d821997df7d8646c9c59b8edb9a573a6e04c534c01892a40aa524a7b68c",
-    strip_prefix = "benchmark-bf585a2789e30585b4e3ce6baf11ef2750b54677",
-    urls = [
-        "https://github.com/google/benchmark/archive/bf585a2789e30585b4e3ce6baf11ef2750b54677.zip",
-    ],
+    name = "com_googlesource_code_re2",
+    sha256 = "906d0df8ff48f8d3a00a808827f009a840190f404559f649cb8e4d7143255ef9",
+    strip_prefix = "re2-a276a8c738735a0fe45a6ee590fe2df69bcf4502",
+    urls = ["https://github.com/google/re2/archive/a276a8c738735a0fe45a6ee590fe2df69bcf4502.zip"],  # 2022-04-08
+)
+
+# Bazel platform rules.
+http_archive(
+    name = "platforms",
+    sha256 = "a879ea428c6d56ab0ec18224f976515948822451473a80d06c2e50af0bbe5121",
+    strip_prefix = "platforms-da5541f26b7de1dc8e04c075c99df5351742a4a2",
+    urls = ["https://github.com/bazelbuild/platforms/archive/da5541f26b7de1dc8e04c075c99df5351742a4a2.zip"],  # 2022-05-27
 )
 
 # Load common dependencies.
-load("//:protobuf_deps.bzl", "protobuf_deps")
+load("//:protobuf_deps.bzl", "PROTOBUF_MAVEN_ARTIFACTS", "protobuf_deps")
 protobuf_deps()
 
-bind(
-    name = "python_headers",
-    actual = "//util/python:python_headers",
-)
-
 load("@rules_jvm_external//:defs.bzl", "maven_install")
+
 maven_install(
-    artifacts = [
-        "com.google.code.gson:gson:2.8.6",
-        "com.google.errorprone:error_prone_annotations:2.3.2",
-        "com.google.j2objc:j2obj_annotations:1.3",
-        "com.google.guava:guava:30.1.1-jre",
-        "com.google.truth:truth:1.1.2",
-        "junit:junit:4.12",
-        "org.easymock:easymock:3.2",
-    ],
+    artifacts = PROTOBUF_MAVEN_ARTIFACTS,
+    # For updating instructions, see:
+    # https://github.com/bazelbuild/rules_jvm_external#updating-maven_installjson
+    maven_install_json = "//:maven_install.json",
     repositories = [
         "https://repo1.maven.org/maven2",
         "https://repo.maven.apache.org/maven2",
     ],
-    # For updating instructions, see: 
-    # https://github.com/bazelbuild/rules_jvm_external#updating-maven_installjson
-    maven_install_json = "//:maven_install.json",
 )
 
 load("@maven//:defs.bzl", "pinned_maven_install")
+
 pinned_maven_install()
-
-bind(
-    name = "guava",
-    actual = "@maven//:com_google_guava_guava",
-)
-
-bind(
-    name = "gson",
-    actual = "@maven//:com_google_code_gson_gson",
-)
-
-bind(
-    name = "error_prone_annotations",
-    actual = "@maven//:com_google_errorprone_error_prone_annotations",
-)
-
-bind(
-    name = "j2objc_annotations",
-    actual = "@maven//:com_google_j2objc_j2objc_annotations",
-)
-
-bind(
-    name = "junit",
-    actual = "@maven//:junit_junit",
-)
-
-bind(
-    name = "easymock",
-    actual = "@maven//:org_easymock_easymock",
-)
-
-bind(
-    name = "easymock_classextension",
-    actual = "@maven//:org_easymock_easymockclassextension",
-)
-
-bind(
-    name = "truth",
-    actual = "@maven//:com_google_truth_truth",
-)
 
 # For `cc_proto_blacklist_test` and `build_test`.
 load("@bazel_skylib//:workspace.bzl", "bazel_skylib_workspace")
+
+load("@rules_python//python:pip.bzl", "pip_install")
+
+pip_install(
+    name="pip_deps",
+    requirements = "//python:requirements.txt"
+)
+
 bazel_skylib_workspace()
+
+load("@rules_pkg//:deps.bzl", "rules_pkg_dependencies")
+rules_pkg_dependencies()
+
+# For `kt_jvm_library`
+load("@io_bazel_rules_kotlin//kotlin:repositories.bzl", "kotlin_repositories")
+kotlin_repositories()
+
+load("@io_bazel_rules_kotlin//kotlin:core.bzl", "kt_register_toolchains")
+kt_register_toolchains()
+
+load("@upb//bazel:workspace_deps.bzl", "upb_deps")
+upb_deps()
+
+load("@upb//bazel:system_python.bzl", "system_python")
+system_python(name = "local_config_python")
+
+load("@utf8_range//:workspace_deps.bzl", "utf8_range_deps")
+utf8_range_deps()
+
+bind(
+    name = "python_headers",
+    actual = "@local_config_python//:python_headers",
+)

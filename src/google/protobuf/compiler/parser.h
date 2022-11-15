@@ -38,17 +38,17 @@
 #define GOOGLE_PROTOBUF_COMPILER_PARSER_H__
 
 #include <cstdint>
-#include <map>
 #include <string>
 #include <utility>
 
-#include <google/protobuf/descriptor.pb.h>
-#include <google/protobuf/io/tokenizer.h>
-#include <google/protobuf/descriptor.h>
-#include <google/protobuf/repeated_field.h>
+#include "absl/container/flat_hash_map.h"
+#include "google/protobuf/descriptor.h"
+#include "google/protobuf/descriptor.pb.h"
+#include "google/protobuf/io/tokenizer.h"
+#include "google/protobuf/repeated_field.h"
 
 // Must be included last.
-#include <google/protobuf/port_def.inc>
+#include "google/protobuf/port_def.inc"
 
 namespace google {
 namespace protobuf {
@@ -71,6 +71,8 @@ class SourceLocationTable;
 class PROTOBUF_EXPORT Parser {
  public:
   Parser();
+  Parser(const Parser&) = delete;
+  Parser& operator=(const Parser&) = delete;
   ~Parser();
 
   // Parse the entire input and construct a FileDescriptorProto representing
@@ -122,6 +124,7 @@ class PROTOBUF_EXPORT Parser {
 
  private:
   class LocationRecorder;
+  struct MapField;
 
   // =================================================================
   // Error recovery helpers
@@ -177,6 +180,9 @@ class PROTOBUF_EXPORT Parser {
   // is greater than max_value, an error will be reported.
   bool ConsumeInteger64(uint64_t max_value, uint64_t* output,
                         const char* error);
+  // Try to consume a 64-bit integer and store its value in "output".  No
+  // error is reported on failure, allowing caller to consume token another way.
+  bool TryConsumeInteger64(uint64_t max_value, uint64_t* output);
   // Consume a number and store its value in "output".  This will accept
   // tokens of either INTEGER or FLOAT type.
   bool ConsumeNumber(double* output, const char* error);
@@ -209,6 +215,9 @@ class PROTOBUF_EXPORT Parser {
   // Invokes error_collector_->AddError() with the line and column number
   // of the current token.
   void AddError(const std::string& error);
+
+  // Invokes error_collector_->AddWarning(), if error_collector_ is not NULL.
+  void AddWarning(int line, int column, const std::string& warning);
 
   // Invokes error_collector_->AddWarning() with the line and column number
   // of the current token.
@@ -281,9 +290,6 @@ class PROTOBUF_EXPORT Parser {
                         std::vector<std::string>* detached_comments) const;
 
    private:
-    // Indexes of parent and current location in the parent
-    // SourceCodeInfo.location repeated field. For top-level elements,
-    // parent_index_ is -1.
     Parser* parser_;
     SourceCodeInfo* source_code_info_;
     SourceCodeInfo::Location* location_;
@@ -381,6 +387,9 @@ class PROTOBUF_EXPORT Parser {
                                 const LocationRecorder& field_location,
                                 const FileDescriptorProto* containing_file);
 
+  bool ParseMapType(MapField* map_field, FieldDescriptorProto* field,
+                    LocationRecorder& type_name_location);
+
   // Parse an "extensions" declaration.
   bool ParseExtensions(DescriptorProto* message,
                        const LocationRecorder& extensions_location,
@@ -391,6 +400,7 @@ class PROTOBUF_EXPORT Parser {
                      const LocationRecorder& message_location);
   bool ParseReservedNames(DescriptorProto* message,
                           const LocationRecorder& parent_location);
+  bool ParseReservedName(std::string* name, const char* error_message);
   bool ParseReservedNumbers(DescriptorProto* message,
                             const LocationRecorder& parent_location);
   bool ParseReserved(EnumDescriptorProto* message,
@@ -434,7 +444,6 @@ class PROTOBUF_EXPORT Parser {
                           const LocationRecorder& method_location,
                           const FileDescriptorProto* containing_file);
 
-
   // Parse options of a single method or stream.
   bool ParseMethodOptions(const LocationRecorder& parent_location,
                           const FileDescriptorProto* containing_file,
@@ -444,8 +453,7 @@ class PROTOBUF_EXPORT Parser {
   // Parse "required", "optional", or "repeated" and fill in "label"
   // with the value. Returns true if such a label is consumed.
   bool ParseLabel(FieldDescriptorProto::Label* label,
-                  const LocationRecorder& field_location,
-                  const FileDescriptorProto* containing_file);
+                  const LocationRecorder& field_location);
 
   // Parse a type name and fill in "type" (if it is a primitive) or
   // "type_name" (if it is not) with the type parsed.
@@ -485,7 +493,7 @@ class PROTOBUF_EXPORT Parser {
   // Parses a single part of a multipart option name. A multipart name consists
   // of names separated by dots. Each name is either an identifier or a series
   // of identifiers separated by dots and enclosed in parentheses. E.g.,
-  // "foo.(bar.baz).qux".
+  // "foo.(bar.baz).moo".
   bool ParseOptionNamePart(UninterpretedOption* uninterpreted_option,
                            const LocationRecorder& part_location,
                            const FileDescriptorProto* containing_file);
@@ -546,8 +554,6 @@ class PROTOBUF_EXPORT Parser {
   // the next element (See SourceCodeInfo.Location in descriptor.proto), when
   // ConsumeEndOfDeclaration() is called.
   std::vector<std::string> upcoming_detached_comments_;
-
-  GOOGLE_DISALLOW_EVIL_CONSTRUCTORS(Parser);
 };
 
 // A table mapping (descriptor, ErrorLocation) pairs -- as reported by
@@ -585,12 +591,12 @@ class PROTOBUF_EXPORT SourceLocationTable {
   void Clear();
 
  private:
-  typedef std::map<
+  using LocationMap = absl::flat_hash_map<
       std::pair<const Message*, DescriptorPool::ErrorCollector::ErrorLocation>,
-      std::pair<int, int> >
-      LocationMap;
+      std::pair<int, int>>;
   LocationMap location_map_;
-  std::map<std::pair<const Message*, std::string>, std::pair<int, int> >
+  absl::flat_hash_map<std::pair<const Message*, std::string>,
+                      std::pair<int, int>>
       import_location_map_;
 };
 
@@ -598,6 +604,6 @@ class PROTOBUF_EXPORT SourceLocationTable {
 }  // namespace protobuf
 }  // namespace google
 
-#include <google/protobuf/port_undef.inc>
+#include "google/protobuf/port_undef.inc"
 
 #endif  // GOOGLE_PROTOBUF_COMPILER_PARSER_H__

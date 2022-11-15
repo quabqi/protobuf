@@ -32,15 +32,20 @@
 //  Based on original Protocol Buffers design by
 //  Sanjay Ghemawat, Jeff Dean, and others.
 
-#include <google/protobuf/io/zero_copy_stream_impl_lite.h>
+#include "google/protobuf/io/zero_copy_stream_impl_lite.h"
 
 #include <algorithm>
 #include <limits>
+#include <utility>
 
-#include <google/protobuf/stubs/common.h>
-#include <google/protobuf/stubs/logging.h>
-#include <google/protobuf/stubs/casts.h>
-#include <google/protobuf/stubs/stl_util.h>
+#include "google/protobuf/stubs/common.h"
+#include "google/protobuf/stubs/logging.h"
+#include "absl/base/casts.h"
+#include "absl/strings/cord.h"
+#include "absl/strings/internal/resize_uninitialized.h"
+
+// Must be included last
+#include "google/protobuf/port_def.inc"
 
 namespace google {
 namespace protobuf {
@@ -124,12 +129,11 @@ bool ArrayOutputStream::Next(void** data, int* size) {
 }
 
 void ArrayOutputStream::BackUp(int count) {
-  GOOGLE_CHECK_GT(last_returned_size_, 0)
-      << "BackUp() can only be called after a successful Next().";
-  GOOGLE_CHECK_LE(count, last_returned_size_);
+  GOOGLE_CHECK_LE(count, last_returned_size_)
+      << "BackUp() can not exceed the size of the last Next() call.";
   GOOGLE_CHECK_GE(count, 0);
   position_ -= count;
-  last_returned_size_ = 0;  // Don't let caller back up further.
+  last_returned_size_ -= count;
 }
 
 int64_t ArrayOutputStream::ByteCount() const { return position_; }
@@ -155,7 +159,7 @@ bool StringOutputStream::Next(void** data, int* size) {
   // Avoid integer overflow in returned '*size'.
   new_size = std::min(new_size, old_size + std::numeric_limits<int>::max());
   // Increase the size, also make sure that it is at least kMinimumSize.
-  STLStringResizeUninitialized(
+  absl::strings_internal::STLStringResizeUninitialized(
       target_,
       std::max(new_size,
                kMinimumSize + 0));  // "+ 0" works around GCC4 weirdness.
@@ -184,7 +188,7 @@ int CopyingInputStream::Skip(int count) {
   int skipped = 0;
   while (skipped < count) {
     int bytes = Read(junk, std::min(count - skipped,
-                                    implicit_cast<int>(sizeof(junk))));
+                                    absl::implicit_cast<int>(sizeof(junk))));
     if (bytes <= 0) {
       // EOF or read error.
       return skipped;
@@ -328,6 +332,10 @@ bool CopyingOutputStreamAdaptor::Next(void** data, int* size) {
 }
 
 void CopyingOutputStreamAdaptor::BackUp(int count) {
+  if (count == 0) {
+    Flush();
+    return;
+  }
   GOOGLE_CHECK_GE(count, 0);
   GOOGLE_CHECK_EQ(buffer_used_, buffer_size_)
       << " BackUp() can only be called after Next().";

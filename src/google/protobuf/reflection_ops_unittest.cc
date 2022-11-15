@@ -32,17 +32,16 @@
 //  Based on original Protocol Buffers design by
 //  Sanjay Ghemawat, Jeff Dean, and others.
 
-#include <google/protobuf/reflection_ops.h>
-#include <google/protobuf/test_util.h>
-#include <google/protobuf/unittest.pb.h>
-#include <google/protobuf/descriptor.h>
+#include "google/protobuf/reflection_ops.h"
 
-#include <google/protobuf/stubs/logging.h>
-#include <google/protobuf/stubs/common.h>
-#include <google/protobuf/testing/googletest.h>
+#include "google/protobuf/stubs/logging.h"
+#include "google/protobuf/stubs/common.h"
+#include "google/protobuf/descriptor.h"
 #include <gtest/gtest.h>
+#include "absl/strings/str_join.h"
+#include "google/protobuf/test_util.h"
+#include "google/protobuf/unittest.pb.h"
 
-#include <google/protobuf/stubs/strutil.h>
 
 namespace google {
 namespace protobuf {
@@ -110,7 +109,7 @@ TEST(ReflectionOpsTest, Merge) {
 
   // This tests concatenating.
   message2.add_repeated_int32(message.repeated_int32(1));
-  int32 i = message.repeated_int32(0);
+  int32_t i = message.repeated_int32(0);
   message.clear_repeated_int32();
   message.add_repeated_int32(i);
 
@@ -143,7 +142,7 @@ TEST(ReflectionOpsTest, MergeExtensions) {
   message2.AddExtension(
       unittest::repeated_int32_extension,
       message.GetExtension(unittest::repeated_int32_extension, 1));
-  int32 i = message.GetExtension(unittest::repeated_int32_extension, 0);
+  int32_t i = message.GetExtension(unittest::repeated_int32_extension, 0);
   message.ClearExtension(unittest::repeated_int32_extension);
   message.AddExtension(unittest::repeated_int32_extension, i);
 
@@ -460,7 +459,7 @@ TEST(ReflectionOpsTest, OneofIsInitialized) {
 static std::string FindInitializationErrors(const Message& message) {
   std::vector<std::string> errors;
   ReflectionOps::FindInitializationErrors(message, "", &errors);
-  return Join(errors, ",");
+  return absl::StrJoin(errors, ",");
 }
 
 TEST(ReflectionOpsTest, FindInitializationErrors) {
@@ -516,7 +515,7 @@ TEST(ReflectionOpsTest, GenericSwap) {
     unittest::TestAllTypes message;
     auto* arena_message = Arena::CreateMessage<unittest::TestAllTypes>(&arena);
     TestUtil::SetAllFields(arena_message);
-    const uint64 initial_arena_size = arena.SpaceUsed();
+    const uint64_t initial_arena_size = arena.SpaceUsed();
 
     GenericSwap(&message, arena_message);
 
@@ -529,7 +528,7 @@ TEST(ReflectionOpsTest, GenericSwap) {
     unittest::TestAllTypes message;
     auto* arena_message = Arena::CreateMessage<unittest::TestAllTypes>(&arena);
     TestUtil::SetAllFields(arena_message);
-    const uint64 initial_arena_size = arena.SpaceUsed();
+    const uint64_t initial_arena_size = arena.SpaceUsed();
 
     GenericSwap(arena_message, &message);
 

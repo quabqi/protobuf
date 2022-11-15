@@ -51,6 +51,7 @@ import com.google.protobuf.UnittestLite.TestAllTypesLite.RepeatedGroup;
 import com.google.protobuf.UnittestLite.TestAllTypesLiteOrBuilder;
 import com.google.protobuf.UnittestLite.TestHugeFieldNumbersLite;
 import com.google.protobuf.UnittestLite.TestNestedExtensionLite;
+import com.google.protobuf.testing.Proto3TestingLite.Proto3MessageLite;
 import map_lite_test.MapTestProto.TestMap;
 import map_lite_test.MapTestProto.TestMap.MessageValue;
 import protobuf_unittest.NestedExtensionLite;
@@ -131,7 +132,8 @@ public class LiteTest {
     output.flush();
     // This tests a bug we had once with removal right at the boundary of the array. It would throw
     // at runtime so no need to assert.
-    TestAllTypesLite.parseFrom(new ByteArrayInputStream(byteStream.toByteArray()));
+    TestAllTypesLite unused =
+        TestAllTypesLite.parseFrom(new ByteArrayInputStream(byteStream.toByteArray()));
   }
 
   @Test
@@ -190,19 +192,28 @@ public class LiteTest {
 
   @Test
   public void testMemoization() throws Exception {
-    TestAllExtensionsLite message = TestUtilLite.getAllLiteExtensionsSet();
+    GeneratedMessageLite<?, ?> message = TestUtilLite.getAllLiteExtensionsSet();
+
+    // This built message should not be mutable
+    assertThat(message.isMutable()).isFalse();
 
     // Test serialized size is memoized
-    message.memoizedSerializedSize = -1;
+    assertThat(message.getMemoizedSerializedSize())
+        .isEqualTo(GeneratedMessageLite.UNINITIALIZED_SERIALIZED_SIZE);
     int size = message.getSerializedSize();
     assertThat(size).isGreaterThan(0);
-    assertThat(message.memoizedSerializedSize).isEqualTo(size);
+    assertThat(message.getMemoizedSerializedSize()).isEqualTo(size);
+    message.clearMemoizedSerializedSize();
+    assertThat(message.getMemoizedSerializedSize())
+        .isEqualTo(GeneratedMessageLite.UNINITIALIZED_SERIALIZED_SIZE);
 
     // Test hashCode is memoized
-    assertThat(message.memoizedHashCode).isEqualTo(0);
+    assertThat(message.hashCodeIsNotMemoized()).isTrue();
     int hashCode = message.hashCode();
-    assertThat(hashCode).isNotEqualTo(0);
-    assertThat(hashCode).isEqualTo(message.memoizedHashCode);
+    assertThat(message.hashCodeIsNotMemoized()).isFalse();
+    assertThat(message.getMemoizedHashCode()).isEqualTo(hashCode);
+    message.clearMemoizedHashCode();
+    assertThat(message.hashCodeIsNotMemoized()).isTrue();
 
     // Test isInitialized is memoized
     Field memo = message.getClass().getDeclaredField("memoizedIsInitialized");
@@ -212,6 +223,22 @@ public class LiteTest {
     assertThat(initialized).isTrue();
     // We have to cast to Byte first. Casting to byte causes a type error
     assertThat(((Byte) memo.get(message)).intValue()).isEqualTo(1);
+  }
+
+  @Test
+  public void testProto3EnumListValueCopyOnWrite() {
+    Proto3MessageLite.Builder builder = Proto3MessageLite.newBuilder();
+
+    Proto3MessageLite message = builder.build();
+    builder.addFieldEnumList30Value(Proto3MessageLite.TestEnum.ONE_VALUE);
+    assertThat(message.getFieldEnumList30List()).isEmpty();
+    assertThat(builder.getFieldEnumList30List()).containsExactly(Proto3MessageLite.TestEnum.ONE);
+    assertThat(message.getFieldEnumList30List()).isEmpty();
+    Proto3MessageLite messageAfterBuild = builder.build();
+    builder.clearFieldEnumList30();
+    assertThat(builder.getFieldEnumList30List()).isEmpty();
+    assertThat(messageAfterBuild.getFieldEnumList30List())
+        .containsExactly(Proto3MessageLite.TestEnum.ONE);
   }
 
   @Test
@@ -1345,6 +1372,7 @@ public class LiteTest {
   }
 
   @Test
+  @SuppressWarnings("ProtoNewBuilderMergeFrom")
   public void testBuilderMergeFromNull() throws Exception {
     try {
       TestAllTypesLite.newBuilder().mergeFrom((TestAllTypesLite) null);
@@ -1497,7 +1525,6 @@ public class LiteTest {
     proto = TestAllTypesLite.newBuilder().setOptionalFloat(2.72f).setOptionalDouble(3.14).build();
     assertToStringEquals("optional_double: 3.14\noptional_float: 2.72", proto);
   }
-
 
   @Test
   public void testToStringStringFields() throws Exception {
@@ -1899,6 +1926,7 @@ public class LiteTest {
   }
 
   @Test
+  @SuppressWarnings("ProtoNewBuilderMergeFrom")
   public void testMergeFromNoLazyFieldSharing() throws Exception {
     TestAllTypesLite.Builder sourceBuilder =
         TestAllTypesLite.newBuilder().setOptionalLazyMessage(NestedMessage.newBuilder().setBb(1));
@@ -2487,9 +2515,9 @@ public class LiteTest {
       assertWithMessage("expected exception").fail();
     } catch (InvalidProtocolBufferException expected) {
       assertThat(
-              TestAllExtensionsLite.newBuilder()
-                  .setExtension(UnittestLite.optionalInt32ExtensionLite, 123)
-                  .build())
+          TestAllExtensionsLite.newBuilder()
+              .setExtension(UnittestLite.optionalInt32ExtensionLite, 123)
+              .build())
           .isEqualTo(expected.getUnfinishedMessage());
     }
   }
@@ -2752,7 +2780,37 @@ public class LiteTest {
         .isTrue();
   }
 
-  private String encodeHex(ByteString bytes) {
+  @Test
+  public void testPreservesFloatingPointNegative0() throws Exception {
+    proto3_unittest.UnittestProto3.TestAllTypes message =
+        proto3_unittest.UnittestProto3.TestAllTypes.newBuilder()
+            .setOptionalFloat(-0.0f)
+            .setOptionalDouble(-0.0)
+            .build();
+    assertThat(
+            proto3_unittest.UnittestProto3.TestAllTypes.parseFrom(
+                message.toByteString(), ExtensionRegistryLite.getEmptyRegistry()))
+        .isEqualTo(message);
+  }
+
+  @Test
+  public void testNegative0FloatingPointEquality() throws Exception {
+    // Like Double#equals and Float#equals, we treat -0.0 as not being equal to +0.0 even though
+    // IEEE 754 mandates that they are equivalent. This test asserts that behavior.
+    proto3_unittest.UnittestProto3.TestAllTypes message1 =
+        proto3_unittest.UnittestProto3.TestAllTypes.newBuilder()
+            .setOptionalFloat(-0.0f)
+            .setOptionalDouble(-0.0)
+            .build();
+    proto3_unittest.UnittestProto3.TestAllTypes message2 =
+        proto3_unittest.UnittestProto3.TestAllTypes.newBuilder()
+            .setOptionalFloat(0.0f)
+            .setOptionalDouble(0.0)
+            .build();
+    assertThat(message1).isNotEqualTo(message2);
+  }
+
+  private static String encodeHex(ByteString bytes) {
     String hexDigits = "0123456789abcdef";
     StringBuilder stringBuilder = new StringBuilder(bytes.size() * 2);
     for (byte b : bytes) {
@@ -2762,7 +2820,7 @@ public class LiteTest {
     return stringBuilder.toString();
   }
 
-  private boolean contains(ByteString a, ByteString b) {
+  private static boolean contains(ByteString a, ByteString b) {
     for (int i = 0; i <= a.size() - b.size(); ++i) {
       if (a.substring(i, i + b.size()).equals(b)) {
         return true;

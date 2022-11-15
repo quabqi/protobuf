@@ -43,11 +43,10 @@
 #include <algorithm>
 #include <iostream>
 
-#include <google/protobuf/stubs/common.h>
-#include <google/protobuf/stubs/logging.h>
-#include <google/protobuf/io/io_win32.h>
-#include <google/protobuf/io/zero_copy_stream_impl.h>
-#include <google/protobuf/stubs/stl_util.h>
+#include "google/protobuf/stubs/common.h"
+#include "google/protobuf/stubs/logging.h"
+#include "google/protobuf/io/io_win32.h"
+#include "google/protobuf/io/zero_copy_stream_impl.h"
 
 
 namespace google {
@@ -104,7 +103,7 @@ FileInputStream::CopyingFileInputStream::CopyingFileInputStream(
       is_closed_(false),
       errno_(0),
       previous_seek_failed_(false) {
-#ifndef _MSC_VER
+#ifndef _WIN32
   int flags = fcntl(file_, F_GETFL);
   flags &= ~O_NONBLOCK;
   fcntl(file_, F_SETFL, flags);

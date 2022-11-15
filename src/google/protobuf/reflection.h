@@ -33,16 +33,18 @@
 #ifndef GOOGLE_PROTOBUF_REFLECTION_H__
 #define GOOGLE_PROTOBUF_REFLECTION_H__
 
+
 #include <memory>
 
-#include <google/protobuf/message.h>
-#include <google/protobuf/generated_enum_util.h>
+#include "google/protobuf/message.h"
+#include "google/protobuf/generated_enum_util.h"
 
 #ifdef SWIG
 #error "You cannot SWIG proto headers"
 #endif
 
-#include <google/protobuf/port_def.inc>
+// Must be included last.
+#include "google/protobuf/port_def.inc"
 
 namespace google {
 namespace protobuf {
@@ -563,6 +565,6 @@ struct RefTypeTraits<
 }  // namespace protobuf
 }  // namespace google
 
-#include <google/protobuf/port_undef.inc>
+#include "google/protobuf/port_undef.inc"
 
 #endif  // GOOGLE_PROTOBUF_REFLECTION_H__

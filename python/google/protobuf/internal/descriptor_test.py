@@ -35,9 +35,6 @@ __author__ = 'robinson@google.com (Will Robinson)'
 import unittest
 import warnings
 
-from google.protobuf import unittest_custom_options_pb2
-from google.protobuf import unittest_import_pb2
-from google.protobuf import unittest_pb2
 from google.protobuf import descriptor_pb2
 from google.protobuf.internal import api_implementation
 from google.protobuf.internal import test_util
@@ -45,10 +42,35 @@ from google.protobuf import descriptor
 from google.protobuf import descriptor_pool
 from google.protobuf import symbol_database
 from google.protobuf import text_format
+from google.protobuf import unittest_custom_options_pb2
+from google.protobuf import unittest_import_pb2
+from google.protobuf import unittest_pb2
 
 
 TEST_EMPTY_MESSAGE_DESCRIPTOR_ASCII = """
 name: 'TestEmptyMessage'
+"""
+
+TEST_FILE_DESCRIPTOR_DEBUG = """syntax = "proto2";
+
+package protobuf_unittest;
+
+message NestedMessage {
+  enum ForeignEnum {
+    FOREIGN_FOO = 4;
+    FOREIGN_BAR = 5;
+    FOREIGN_BAZ = 6;
+  }
+  optional int32 bb = 1;
+}
+
+message ResponseMessage {
+}
+
+service Service {
+  rpc CallMethod(.protobuf_unittest.NestedMessage) returns (.protobuf_unittest.ResponseMessage);
+}
+
 """
 
 
@@ -96,6 +118,30 @@ class DescriptorTest(unittest.TestCase):
   def GetDescriptorPool(self):
     return symbol_database.Default().pool
 
+  def testMissingPackage(self):
+    file_proto = descriptor_pb2.FileDescriptorProto(
+        name='some/filename/some.proto')
+    serialized = file_proto.SerializeToString()
+    pool = descriptor_pool.DescriptorPool()
+    file_descriptor = pool.AddSerializedFile(serialized)
+    self.assertEqual('', file_descriptor.package)
+
+  def testEmptyPackage(self):
+    file_proto = descriptor_pb2.FileDescriptorProto(
+        name='some/filename/some.proto', package='')
+    serialized = file_proto.SerializeToString()
+    pool = descriptor_pool.DescriptorPool()
+    file_descriptor = pool.AddSerializedFile(serialized)
+    self.assertEqual('', file_descriptor.package)
+
+  def testFindMethodByName(self):
+    service_descriptor = (unittest_custom_options_pb2.
+                          TestServiceWithCustomOptions.DESCRIPTOR)
+    method_descriptor = service_descriptor.FindMethodByName('Foo')
+    self.assertEqual(method_descriptor.name, 'Foo')
+    with self.assertRaises(KeyError):
+      service_descriptor.FindMethodByName('MethodDoesNotExist')
+
   def testEnumValueName(self):
     self.assertEqual(self.my_message.EnumValueName('ForeignEnum', 4),
                      'FOREIGN_FOO')
@@ -120,6 +166,13 @@ class DescriptorTest(unittest.TestCase):
 
   def testContainingServiceFixups(self):
     self.assertEqual(self.my_service, self.my_method.containing_service)
+
+  @unittest.skipIf(
+      api_implementation.Type() == 'python',
+      'GetDebugString is only available with the cpp implementation',
+  )
+  def testGetDebugString(self):
+    self.assertEqual(self.my_file.GetDebugString(), TEST_FILE_DESCRIPTOR_DEBUG)
 
   def testGetOptions(self):
     self.assertEqual(self.my_enum.GetOptions(),
@@ -299,10 +352,10 @@ class DescriptorTest(unittest.TestCase):
         unittest_custom_options_pb2.complex_opt1].foo)
     self.assertEqual(324, options.Extensions[
         unittest_custom_options_pb2.complex_opt1].Extensions[
-            unittest_custom_options_pb2.quux])
+            unittest_custom_options_pb2.mooo])
     self.assertEqual(876, options.Extensions[
         unittest_custom_options_pb2.complex_opt1].Extensions[
-            unittest_custom_options_pb2.corge].qux)
+            unittest_custom_options_pb2.corge].moo)
     self.assertEqual(987, options.Extensions[
         unittest_custom_options_pb2.complex_opt2].baz)
     self.assertEqual(654, options.Extensions[
@@ -312,28 +365,28 @@ class DescriptorTest(unittest.TestCase):
         unittest_custom_options_pb2.complex_opt2].bar.foo)
     self.assertEqual(1999, options.Extensions[
         unittest_custom_options_pb2.complex_opt2].bar.Extensions[
-            unittest_custom_options_pb2.quux])
+            unittest_custom_options_pb2.mooo])
     self.assertEqual(2008, options.Extensions[
         unittest_custom_options_pb2.complex_opt2].bar.Extensions[
-            unittest_custom_options_pb2.corge].qux)
+            unittest_custom_options_pb2.corge].moo)
     self.assertEqual(741, options.Extensions[
         unittest_custom_options_pb2.complex_opt2].Extensions[
             unittest_custom_options_pb2.garply].foo)
     self.assertEqual(1998, options.Extensions[
         unittest_custom_options_pb2.complex_opt2].Extensions[
             unittest_custom_options_pb2.garply].Extensions[
-                unittest_custom_options_pb2.quux])
+                unittest_custom_options_pb2.mooo])
     self.assertEqual(2121, options.Extensions[
         unittest_custom_options_pb2.complex_opt2].Extensions[
             unittest_custom_options_pb2.garply].Extensions[
-                unittest_custom_options_pb2.corge].qux)
+                unittest_custom_options_pb2.corge].moo)
     self.assertEqual(1971, options.Extensions[
         unittest_custom_options_pb2.ComplexOptionType2
         .ComplexOptionType4.complex_opt4].waldo)
     self.assertEqual(321, options.Extensions[
         unittest_custom_options_pb2.complex_opt2].fred.waldo)
     self.assertEqual(9, options.Extensions[
-        unittest_custom_options_pb2.complex_opt3].qux)
+        unittest_custom_options_pb2.complex_opt3].moo)
     self.assertEqual(22, options.Extensions[
         unittest_custom_options_pb2.complex_opt3].complexoptiontype5.plugh)
     self.assertEqual(24, options.Extensions[
@@ -419,7 +472,6 @@ class DescriptorTest(unittest.TestCase):
     self.assertEqual(self.my_file.package, 'protobuf_unittest')
     self.assertEqual(self.my_file.pool, self.pool)
     self.assertFalse(self.my_file.has_options)
-    self.assertEqual('proto2', self.my_file.syntax)
     file_proto = descriptor_pb2.FileDescriptorProto()
     self.my_file.CopyToProto(file_proto)
     self.assertEqual(self.my_file.serialized_pb,
@@ -428,7 +480,7 @@ class DescriptorTest(unittest.TestCase):
     self.assertEqual(unittest_pb2.DESCRIPTOR.pool, descriptor_pool.Default())
 
   @unittest.skipIf(
-      api_implementation.Type() != 'cpp' or api_implementation.Version() != 2,
+      api_implementation.Type() == 'python',
       'Immutability of descriptors is only enforced in v2 implementation')
   def testImmutableCppDescriptor(self):
     file_descriptor = unittest_pb2.DESCRIPTOR
@@ -523,6 +575,7 @@ class GeneratedDescriptorTest(unittest.TestCase):
     self.assertIn(field_descriptor, {field_descriptor: None})
     self.assertEqual(None, field_descriptor.extension_scope)
     self.assertEqual(None, field_descriptor.enum_type)
+    self.assertTrue(field_descriptor.has_presence)
     if api_implementation.Type() == 'cpp':
       # For test coverage only
       self.assertEqual(field_descriptor.id, field_descriptor.id)
@@ -565,6 +618,12 @@ class GeneratedDescriptorTest(unittest.TestCase):
   def CheckDescriptorMapping(self, mapping):
     # Verifies that a property like 'messageDescriptor.fields' has all the
     # properties of an immutable abc.Mapping.
+    iterated_keys = []
+    for key in mapping:
+      iterated_keys.append(key)
+    self.assertEqual(len(iterated_keys), len(mapping))
+    self.assertEqual(set(iterated_keys), set(mapping.keys()))
+
     self.assertNotEqual(
         mapping, unittest_pb2.TestAllExtensions.DESCRIPTOR.fields_by_name)
     self.assertNotEqual(mapping, {})
@@ -581,10 +640,15 @@ class GeneratedDescriptorTest(unittest.TestCase):
     with self.assertRaises(TypeError):
       mapping.get()
     # TODO(jieluo): Fix python and cpp extension diff.
-    if api_implementation.Type() == 'python':
-      self.assertRaises(TypeError, mapping.get, [])
-    else:
+    if api_implementation.Type() == 'cpp':
       self.assertEqual(None, mapping.get([]))
+    else:
+      self.assertRaises(TypeError, mapping.get, [])
+      with self.assertRaises(TypeError):
+        if [] in mapping:
+          pass
+      with self.assertRaises(TypeError):
+        _ = mapping[[]]
     # keys(), iterkeys() &co
     item = (next(iter(mapping.keys())), next(iter(mapping.values())))
     self.assertEqual(item, next(iter(mapping.items())))
@@ -596,10 +660,12 @@ class GeneratedDescriptorTest(unittest.TestCase):
     self.assertRaises(KeyError, mapping.__getitem__, 'key_error')
     self.assertRaises(KeyError, mapping.__getitem__, len(mapping) + 1)
     # TODO(jieluo): Add __repr__ support for DescriptorMapping.
-    if api_implementation.Type() == 'python':
-      self.assertEqual(len(str(dict(mapping.items()))), len(str(mapping)))
-    else:
+    if api_implementation.Type() == 'cpp':
       self.assertEqual(str(mapping)[0], '<')
+    else:
+      print(str(dict(mapping.items()))[:100])
+      print(str(mapping)[:100])
+      self.assertEqual(len(str(dict(mapping.items()))), len(str(mapping)))
 
   def testDescriptor(self):
     message_descriptor = unittest_pb2.TestAllTypes.DESCRIPTOR
@@ -756,6 +822,16 @@ class DescriptorCopyToProtoTest(unittest.TestCase):
           deprecated: true
         >
       >
+      field {
+        name: "deprecated_message"
+        number: 3
+        label: LABEL_OPTIONAL
+        type: TYPE_MESSAGE
+        type_name: ".protobuf_unittest.TestAllTypes.NestedMessage"
+        options {
+          deprecated: true
+        }
+      }
       field {
         name: "deprecated_int32_in_oneof"
         number: 2

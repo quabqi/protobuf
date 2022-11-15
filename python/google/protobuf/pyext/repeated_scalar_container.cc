@@ -31,20 +31,21 @@
 // Author: anuraag@google.com (Anuraag Agrawal)
 // Author: tibell@google.com (Johan Tibell)
 
-#include <google/protobuf/pyext/repeated_scalar_container.h>
+#include "google/protobuf/pyext/repeated_scalar_container.h"
 
 #include <cstdint>
 #include <memory>
+#include <string>
 
-#include <google/protobuf/stubs/common.h>
-#include <google/protobuf/stubs/logging.h>
-#include <google/protobuf/descriptor.h>
-#include <google/protobuf/dynamic_message.h>
-#include <google/protobuf/message.h>
-#include <google/protobuf/pyext/descriptor.h>
-#include <google/protobuf/pyext/descriptor_pool.h>
-#include <google/protobuf/pyext/message.h>
-#include <google/protobuf/pyext/scoped_pyobject_ptr.h>
+#include "google/protobuf/stubs/common.h"
+#include "google/protobuf/stubs/logging.h"
+#include "google/protobuf/descriptor.h"
+#include "google/protobuf/dynamic_message.h"
+#include "google/protobuf/message.h"
+#include "google/protobuf/pyext/descriptor.h"
+#include "google/protobuf/pyext/descriptor_pool.h"
+#include "google/protobuf/pyext/message.h"
+#include "google/protobuf/pyext/scoped_pyobject_ptr.h"
 
 #define PyString_AsString(ob) \
   (PyUnicode_Check(ob) ? PyUnicode_AsUTF8(ob) : PyBytes_AsString(ob))
@@ -274,6 +275,11 @@ static PyObject* Subscript(PyObject* pself, PyObject* slice) {
   bool return_list = false;
   if (PyLong_Check(slice)) {
     from = to = PyLong_AsLong(slice);
+  } else if (PyIndex_Check(slice)) {
+    from = to = PyNumber_AsSsize_t(slice, PyExc_ValueError);
+    if (from == -1 && PyErr_Occurred()) {
+      return nullptr;
+    }
   } else if (PySlice_Check(slice)) {
     length = Len(pself);
     if (PySlice_GetIndicesEx(slice, length, &from, &to, &step, &slicelength) ==

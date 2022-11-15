@@ -38,7 +38,7 @@
 // will not cross the end of the buffer, since we can avoid a lot
 // of branching in this case.
 
-#include <google/protobuf/io/coded_stream.h>
+#include "google/protobuf/io/coded_stream.h"
 
 #include <limits.h>
 
@@ -46,15 +46,18 @@
 #include <cstring>
 #include <utility>
 
-#include <google/protobuf/stubs/logging.h>
-#include <google/protobuf/stubs/common.h>
-#include <google/protobuf/arena.h>
-#include <google/protobuf/io/zero_copy_stream.h>
-#include <google/protobuf/io/zero_copy_stream_impl_lite.h>
-#include <google/protobuf/stubs/stl_util.h>
+#include "google/protobuf/stubs/logging.h"
+#include "google/protobuf/stubs/common.h"
+#include "absl/strings/internal/resize_uninitialized.h"
+#include "absl/strings/string_view.h"
+#include "google/protobuf/arena.h"
+#include "google/protobuf/io/zero_copy_stream.h"
+#include "google/protobuf/io/zero_copy_stream_impl_lite.h"
+#include "google/protobuf/port.h"
 
 
-#include <google/protobuf/port_def.inc>
+// Must be included last.
+#include "google/protobuf/port_def.inc"
 
 namespace google {
 namespace protobuf {
@@ -196,7 +199,7 @@ void CodedInputStream::PrintTotalBytesLimitError() {
       << total_bytes_limit_
       << " bytes).  To increase the limit (or to disable these "
          "warnings), see CodedInputStream::SetTotalBytesLimit() "
-         "in third_party/protobuf/src/google/protobuf/io/coded_stream.h.";
+         "in third_party/protobuf/io/coded_stream.h.";
 }
 
 bool CodedInputStream::SkipFallback(int count, int original_buffer_size) {
@@ -259,7 +262,7 @@ bool CodedInputStream::ReadString(std::string* buffer, int size) {
   if (size < 0) return false;  // security: size is often user-supplied
 
   if (BufferSize() >= size) {
-    STLStringResizeUninitialized(buffer, size);
+    absl::strings_internal::STLStringResizeUninitialized(buffer, size);
     std::pair<char*, bool> z = as_string_data(buffer);
     if (z.second) {
       // Oddly enough, memcpy() requires its first two args to be non-NULL even
@@ -391,7 +394,7 @@ inline ::std::pair<bool, const uint8_t*> ReadVarint32FromArray(
   b = *(ptr++);
   result += b << 28;
   if (!(b & 0x80)) goto done;
-  // "result -= 0x80 << 28" is irrevelant.
+  // "result -= 0x80 << 28" is irrelevant.
 
   // If the input is larger than 32 bits, we still need to read it all
   // and discard the high-order bits.
@@ -704,7 +707,7 @@ int EpsCopyOutputStream::Flush(uint8_t* ptr) {
 uint8_t* EpsCopyOutputStream::Trim(uint8_t* ptr) {
   if (had_error_) return ptr;
   int s = Flush(ptr);
-  if (s) stream_->BackUp(s);
+  stream_->BackUp(s);
   // Reset to initial state (expecting new buffer)
   buffer_end_ = end_ = buffer_;
   return buffer_;
@@ -929,18 +932,6 @@ uint8_t* EpsCopyOutputStream::WriteStringOutline(uint32_t num, const std::string
 std::atomic<bool> CodedOutputStream::default_serialization_deterministic_{
     false};
 
-CodedOutputStream::CodedOutputStream(ZeroCopyOutputStream* stream,
-                                     bool do_eager_refresh)
-    : impl_(stream, IsDefaultSerializationDeterministic(), &cur_),
-      start_count_(stream->ByteCount()) {
-  if (do_eager_refresh) {
-    void* data;
-    int size;
-    if (!stream->Next(&data, &size) || size == 0) return;
-    cur_ = impl_.SetInitialBuffer(data, size);
-  }
-}
-
 CodedOutputStream::~CodedOutputStream() { Trim(); }
 
 
@@ -951,28 +942,8 @@ uint8_t* CodedOutputStream::WriteStringWithSizeToArray(const std::string& str,
   return WriteStringToArray(str, target);
 }
 
-uint8_t* CodedOutputStream::WriteVarint32ToArrayOutOfLineHelper(uint32_t value,
-                                                              uint8_t* target) {
-  GOOGLE_DCHECK_GE(value, 0x80);
-  target[0] |= static_cast<uint8_t>(0x80);
-  value >>= 7;
-  target[1] = static_cast<uint8_t>(value);
-  if (value < 0x80) {
-    return target + 2;
-  }
-  target += 2;
-  do {
-    // Turn on continuation bit in the byte we just wrote.
-    target[-1] |= static_cast<uint8_t>(0x80);
-    value >>= 7;
-    *target = static_cast<uint8_t>(value);
-    ++target;
-  } while (value >= 0x80);
-  return target;
-}
-
 }  // namespace io
 }  // namespace protobuf
 }  // namespace google
 
-#include <google/protobuf/port_undef.inc>
+#include "google/protobuf/port_undef.inc"

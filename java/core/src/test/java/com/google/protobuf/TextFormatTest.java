@@ -67,11 +67,7 @@ import org.junit.function.ThrowingRunnable;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-/**
- * Test case for {@link TextFormat}.
- *
- * <p>TODO(wenboz): ExtensionTest and rest of text_format_unittest.cc.
- */
+/** Test case for {@link TextFormat}. */
 @RunWith(JUnit4.class)
 public class TextFormatTest {
 
@@ -170,6 +166,13 @@ public class TextFormatTest {
     javaText = javaText.replace(".0\n", "\n");
 
     assertThat(javaText).isEqualTo(ALL_FIELDS_SET_TEXT);
+  }
+
+  @Test
+  // https://github.com/protocolbuffers/protobuf/issues/9447
+  public void testCharacterNotInUnicodeBlock() throws TextFormat.InvalidEscapeSequenceException {
+    ByteString actual = TextFormat.unescapeBytes("\\U000358da");
+    assertThat(actual.size()).isEqualTo(4);
   }
 
   /** Print TestAllTypes as Builder and compare with golden file. */
@@ -721,7 +724,6 @@ public class TextFormatTest {
     assertThat(actual).isEqualTo(expected);
   }
 
-
   @Test
   public void testMergeAny_customBuiltTypeRegistry() throws Exception {
     TestAny.Builder builder = TestAny.newBuilder();
@@ -755,7 +757,6 @@ public class TextFormatTest {
                         .build())
                 .build());
   }
-
 
   private void assertParseError(String error, String text) {
     // Test merge().
@@ -820,6 +821,7 @@ public class TextFormatTest {
     }
   }
 
+  @CanIgnoreReturnValue
   private TestAllTypes assertParseSuccessWithOverwriteForbidden(String text)
       throws TextFormat.ParseException {
     TestAllTypes.Builder builder = TestAllTypes.newBuilder();
@@ -1395,7 +1397,6 @@ public class TextFormatTest {
         .isEqualTo("1: \"\\343\\201\\202\"\n");
   }
 
-
   @Test
   public void testParseUnknownExtensions() throws Exception {
     TestUtil.TestLogHandler logHandler = new TestUtil.TestLogHandler();
@@ -1443,6 +1444,18 @@ public class TextFormatTest {
             + "unknown_field2: 2\n"
             + "[unknown_extension]: 12345\n"
             + "unknown_field3: 3\n");
+  }
+
+  @Test
+  public void testParseUnknownExtensionWithAnyMessage() throws Exception {
+    assertParseSuccessWithUnknownExtensions(
+        "[unknown_extension]: { "
+            + "  any_value { "
+            + "    [type.googleapis.com/protobuf_unittest.OneString] { "
+            + "      data: 123 "
+            + "    } "
+            + " } "
+            + "}");
   }
 
   // See additional coverage in testOneofOverwriteForbidden and testMapOverwriteForbidden.
@@ -1757,6 +1770,7 @@ public class TextFormatTest {
     }
   }
 
+  @SuppressWarnings("LenientFormatStringValidation")
   private void assertLocation(
       TextFormatParseInfoTree tree,
       final Descriptor descriptor,
@@ -1770,6 +1784,7 @@ public class TextFormatTest {
       TextFormatParseLocation expected = TextFormatParseLocation.create(line, column);
       assertThat(location).isEqualTo(expected);
     } else if (line != -1 && column != -1) {
+      // Expected 0 args, but got 3.
       assertWithMessage(
               "Tree/descriptor/fieldname did not contain index %d, line %d column %d expected",
               index, line, column)
@@ -1814,5 +1829,16 @@ public class TextFormatTest {
             + "  value: 30\n"
             + "}\n";
     assertThat(TextFormat.printer().printToString(message)).isEqualTo(text);
+  }
+
+  @Test
+  public void testPreservesFloatingPointNegative0() throws Exception {
+    proto3_unittest.UnittestProto3.TestAllTypes message =
+        proto3_unittest.UnittestProto3.TestAllTypes.newBuilder()
+            .setOptionalFloat(-0.0f)
+            .setOptionalDouble(-0.0)
+            .build();
+    assertThat(TextFormat.printer().printToString(message))
+        .isEqualTo("optional_float: -0.0\noptional_double: -0.0\n");
   }
 }

@@ -44,18 +44,19 @@
 #ifndef GOOGLE_PROTOBUF_IO_ZERO_COPY_STREAM_IMPL_LITE_H__
 #define GOOGLE_PROTOBUF_IO_ZERO_COPY_STREAM_IMPL_LITE_H__
 
-
 #include <iosfwd>
 #include <memory>
 #include <string>
+#include <utility>
 
-#include <google/protobuf/stubs/callback.h>
-#include <google/protobuf/stubs/common.h>
-#include <google/protobuf/io/zero_copy_stream.h>
-#include <google/protobuf/stubs/stl_util.h>
+#include "google/protobuf/stubs/callback.h"
+#include "google/protobuf/stubs/common.h"
+#include "google/protobuf/io/zero_copy_stream.h"
+#include "google/protobuf/port.h"
 
 
-#include <google/protobuf/port_def.inc>
+// Must be included last.
+#include "google/protobuf/port_def.inc"
 
 namespace google {
 namespace protobuf {
@@ -64,7 +65,8 @@ namespace io {
 // ===================================================================
 
 // A ZeroCopyInputStream backed by an in-memory array of bytes.
-class PROTOBUF_EXPORT ArrayInputStream : public ZeroCopyInputStream {
+class PROTOBUF_EXPORT ArrayInputStream PROTOBUF_FUTURE_FINAL
+    : public ZeroCopyInputStream {
  public:
   // Create an InputStream that returns the bytes pointed to by "data".
   // "data" remains the property of the caller but must remain valid until
@@ -75,6 +77,10 @@ class PROTOBUF_EXPORT ArrayInputStream : public ZeroCopyInputStream {
   // it.
   ArrayInputStream(const void* data, int size, int block_size = -1);
   ~ArrayInputStream() override = default;
+
+  // `ArrayInputStream` is neither copiable nor assignable
+  ArrayInputStream(const ArrayInputStream&) = delete;
+  ArrayInputStream& operator=(const ArrayInputStream&) = delete;
 
   // implements ZeroCopyInputStream ----------------------------------
   bool Next(const void** data, int* size) override;
@@ -91,14 +97,13 @@ class PROTOBUF_EXPORT ArrayInputStream : public ZeroCopyInputStream {
   int position_;
   int last_returned_size_;  // How many bytes we returned last time Next()
                             // was called (used for error checking only).
-
-  GOOGLE_DISALLOW_EVIL_CONSTRUCTORS(ArrayInputStream);
 };
 
 // ===================================================================
 
 // A ZeroCopyOutputStream backed by an in-memory array of bytes.
-class PROTOBUF_EXPORT ArrayOutputStream : public ZeroCopyOutputStream {
+class PROTOBUF_EXPORT ArrayOutputStream PROTOBUF_FUTURE_FINAL
+    : public ZeroCopyOutputStream {
  public:
   // Create an OutputStream that writes to the bytes pointed to by "data".
   // "data" remains the property of the caller but must remain valid until
@@ -109,6 +114,10 @@ class PROTOBUF_EXPORT ArrayOutputStream : public ZeroCopyOutputStream {
   // it.
   ArrayOutputStream(void* data, int size, int block_size = -1);
   ~ArrayOutputStream() override = default;
+
+  // `ArrayOutputStream` is neither copiable nor assignable
+  ArrayOutputStream(const ArrayOutputStream&) = delete;
+  ArrayOutputStream& operator=(const ArrayOutputStream&) = delete;
 
   // implements ZeroCopyOutputStream ---------------------------------
   bool Next(void** data, int* size) override;
@@ -123,14 +132,13 @@ class PROTOBUF_EXPORT ArrayOutputStream : public ZeroCopyOutputStream {
   int position_;
   int last_returned_size_;  // How many bytes we returned last time Next()
                             // was called (used for error checking only).
-
-  GOOGLE_DISALLOW_EVIL_CONSTRUCTORS(ArrayOutputStream);
 };
 
 // ===================================================================
 
 // A ZeroCopyOutputStream which appends bytes to a string.
-class PROTOBUF_EXPORT StringOutputStream : public ZeroCopyOutputStream {
+class PROTOBUF_EXPORT StringOutputStream PROTOBUF_FUTURE_FINAL
+    : public ZeroCopyOutputStream {
  public:
   // Create a StringOutputStream which appends bytes to the given string.
   // The string remains property of the caller, but it is mutated in arbitrary
@@ -144,6 +152,10 @@ class PROTOBUF_EXPORT StringOutputStream : public ZeroCopyOutputStream {
   explicit StringOutputStream(std::string* target);
   ~StringOutputStream() override = default;
 
+  // `StringOutputStream` is neither copiable nor assignable
+  StringOutputStream(const StringOutputStream&) = delete;
+  StringOutputStream& operator=(const StringOutputStream&) = delete;
+
   // implements ZeroCopyOutputStream ---------------------------------
   bool Next(void** data, int* size) override;
   void BackUp(int count) override;
@@ -153,8 +165,6 @@ class PROTOBUF_EXPORT StringOutputStream : public ZeroCopyOutputStream {
   static constexpr size_t kMinimumSize = 16;
 
   std::string* target_;
-
-  GOOGLE_DISALLOW_EVIL_CONSTRUCTORS(StringOutputStream);
 };
 
 // Note:  There is no StringInputStream.  Instead, just create an
@@ -211,6 +221,10 @@ class PROTOBUF_EXPORT CopyingInputStreamAdaptor : public ZeroCopyInputStream {
                                      int block_size = -1);
   ~CopyingInputStreamAdaptor() override;
 
+  // `CopyingInputStreamAdaptor` is neither copiable nor assignable
+  CopyingInputStreamAdaptor(const CopyingInputStreamAdaptor&) = delete;
+  CopyingInputStreamAdaptor& operator=(const CopyingInputStreamAdaptor&) = delete;
+
   // Call SetOwnsCopyingStream(true) to tell the CopyingInputStreamAdaptor to
   // delete the underlying CopyingInputStream when it is destroyed.
   void SetOwnsCopyingStream(bool value) { owns_copying_stream_ = value; }
@@ -251,8 +265,6 @@ class PROTOBUF_EXPORT CopyingInputStreamAdaptor : public ZeroCopyInputStream {
   // BackUp().  These need to be returned again.
   // 0 <= backup_bytes_ <= buffer_used_
   int backup_bytes_;
-
-  GOOGLE_DISALLOW_EVIL_CONSTRUCTORS(CopyingInputStreamAdaptor);
 };
 
 // ===================================================================
@@ -293,6 +305,10 @@ class PROTOBUF_EXPORT CopyingOutputStreamAdaptor : public ZeroCopyOutputStream {
   explicit CopyingOutputStreamAdaptor(CopyingOutputStream* copying_stream,
                                       int block_size = -1);
   ~CopyingOutputStreamAdaptor() override;
+
+  // `CopyingOutputStreamAdaptor` is neither copiable nor assignable
+  CopyingOutputStreamAdaptor(const CopyingOutputStreamAdaptor&) = delete;
+  CopyingOutputStreamAdaptor& operator=(const CopyingOutputStreamAdaptor&) = delete;
 
   // Writes all pending data to the underlying stream.  Returns false if a
   // write error occurred on the underlying stream.  (The underlying
@@ -338,18 +354,21 @@ class PROTOBUF_EXPORT CopyingOutputStreamAdaptor : public ZeroCopyOutputStream {
   // returned by Next()).  When BackUp() is called, we just reduce this.
   // 0 <= buffer_used_ <= buffer_size_.
   int buffer_used_;
-
-  GOOGLE_DISALLOW_EVIL_CONSTRUCTORS(CopyingOutputStreamAdaptor);
 };
 
 // ===================================================================
 
 // A ZeroCopyInputStream which wraps some other stream and limits it to
 // a particular byte count.
-class PROTOBUF_EXPORT LimitingInputStream : public ZeroCopyInputStream {
+class PROTOBUF_EXPORT LimitingInputStream PROTOBUF_FUTURE_FINAL
+    : public ZeroCopyInputStream {
  public:
   LimitingInputStream(ZeroCopyInputStream* input, int64_t limit);
   ~LimitingInputStream() override;
+
+  // `LimitingInputStream` is neither copiable nor assignable
+  LimitingInputStream(const LimitingInputStream&) = delete;
+  LimitingInputStream& operator=(const LimitingInputStream&) = delete;
 
   // implements ZeroCopyInputStream ----------------------------------
   bool Next(const void** data, int* size) override;
@@ -362,31 +381,15 @@ class PROTOBUF_EXPORT LimitingInputStream : public ZeroCopyInputStream {
   ZeroCopyInputStream* input_;
   int64_t limit_;  // Decreases as we go, becomes negative if we overshoot.
   int64_t prior_bytes_read_;  // Bytes read on underlying stream at construction
-
-  GOOGLE_DISALLOW_EVIL_CONSTRUCTORS(LimitingInputStream);
 };
 
 
 // ===================================================================
 
-// mutable_string_data() and as_string_data() are workarounds to improve
-// the performance of writing new data to an existing string.  Unfortunately
-// the methods provided by the string class are suboptimal, and using memcpy()
-// is mildly annoying because it requires its pointer args to be non-NULL even
-// if we ask it to copy 0 bytes.  Furthermore, string_as_array() has the
-// property that it always returns NULL if its arg is the empty string, exactly
-// what we want to avoid if we're using it in conjunction with memcpy()!
-// With C++11, the desired memcpy() boils down to memcpy(..., &(*s)[0], size),
-// where s is a string*.  Without C++11, &(*s)[0] is not guaranteed to be safe,
-// so we use string_as_array(), and live with the extra logic that tests whether
-// *s is empty.
-
 // Return a pointer to mutable characters underlying the given string.  The
 // return value is valid until the next time the string is resized.  We
 // trust the caller to treat the return value as an array of length s->size().
 inline char* mutable_string_data(std::string* s) {
-  // This should be simpler & faster than string_as_array() because the latter
-  // is guaranteed to return NULL when *s is empty, so it has to check for that.
   return &(*s)[0];
 }
 
@@ -403,6 +406,6 @@ inline std::pair<char*, bool> as_string_data(std::string* s) {
 }  // namespace protobuf
 }  // namespace google
 
-#include <google/protobuf/port_undef.inc>
+#include "google/protobuf/port_undef.inc"
 
 #endif  // GOOGLE_PROTOBUF_IO_ZERO_COPY_STREAM_IMPL_LITE_H__

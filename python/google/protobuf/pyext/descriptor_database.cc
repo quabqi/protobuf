@@ -31,15 +31,17 @@
 // This file defines a C++ DescriptorDatabase, which wraps a Python Database
 // and delegate all its operations to Python methods.
 
-#include <google/protobuf/pyext/descriptor_database.h>
+#include "google/protobuf/pyext/descriptor_database.h"
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
-#include <google/protobuf/stubs/logging.h>
-#include <google/protobuf/stubs/common.h>
-#include <google/protobuf/descriptor.pb.h>
-#include <google/protobuf/pyext/message.h>
-#include <google/protobuf/pyext/scoped_pyobject_ptr.h>
+#include "google/protobuf/stubs/logging.h"
+#include "google/protobuf/stubs/common.h"
+#include "google/protobuf/descriptor.pb.h"
+#include "google/protobuf/pyext/message.h"
+#include "google/protobuf/pyext/scoped_pyobject_ptr.h"
 
 namespace google {
 namespace protobuf {
@@ -56,7 +58,7 @@ PyDescriptorDatabase::~PyDescriptorDatabase() { Py_DECREF(py_database_); }
 // Handles all kinds of Python errors, which are simply logged.
 static bool GetFileDescriptorProto(PyObject* py_descriptor,
                                    FileDescriptorProto* output) {
-  if (py_descriptor == NULL) {
+  if (py_descriptor == nullptr) {
     if (PyErr_ExceptionMatches(PyExc_KeyError)) {
       // Expected error: item was simply not found.
       PyErr_Clear();
@@ -83,8 +85,8 @@ static bool GetFileDescriptorProto(PyObject* py_descriptor,
     // Slow path: serialize the message. This allows to use databases which
     // use a different implementation of FileDescriptorProto.
     ScopedPyObjectPtr serialized_pb(
-        PyObject_CallMethod(py_descriptor, "SerializeToString", NULL));
-    if (serialized_pb == NULL) {
+        PyObject_CallMethod(py_descriptor, "SerializeToString", nullptr));
+    if (serialized_pb == nullptr) {
       GOOGLE_LOG(ERROR)
           << "DescriptorDatabase method did not return a FileDescriptorProto";
       PyErr_Print();
@@ -134,7 +136,7 @@ bool PyDescriptorDatabase::FindFileContainingExtension(
     FileDescriptorProto* output) {
   ScopedPyObjectPtr py_method(
       PyObject_GetAttrString(py_database_, "FindFileContainingExtension"));
-  if (py_method == NULL) {
+  if (py_method == nullptr) {
     // This method is not implemented, returns without error.
     PyErr_Clear();
     return false;
@@ -153,7 +155,7 @@ bool PyDescriptorDatabase::FindAllExtensionNumbers(
     const std::string& containing_type, std::vector<int>* output) {
   ScopedPyObjectPtr py_method(
       PyObject_GetAttrString(py_database_, "FindAllExtensionNumbers"));
-  if (py_method == NULL) {
+  if (py_method == nullptr) {
     // This method is not implemented, returns without error.
     PyErr_Clear();
     return false;
@@ -161,7 +163,7 @@ bool PyDescriptorDatabase::FindAllExtensionNumbers(
   ScopedPyObjectPtr py_list(
       PyObject_CallFunction(py_method.get(), "s#", containing_type.c_str(),
                             containing_type.size()));
-  if (py_list == NULL) {
+  if (py_list == nullptr) {
     PyErr_Print();
     return false;
   }

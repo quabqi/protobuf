@@ -30,14 +30,18 @@
 
 // Author: qrczak@google.com (Marcin Kowalczyk)
 
-#include <google/protobuf/python/python_protobuf.h>
+#include "google/protobuf/python/python_protobuf.h"
 
 namespace google {
 namespace protobuf {
 namespace python {
 
-static const Message* GetCProtoInsidePyProtoStub(PyObject* msg) { return NULL; }
-static Message* MutableCProtoInsidePyProtoStub(PyObject* msg) { return NULL; }
+static const Message* GetCProtoInsidePyProtoStub(PyObject* msg) {
+  return nullptr;
+}
+static Message* MutableCProtoInsidePyProtoStub(PyObject* msg) {
+  return nullptr;
+}
 
 // This is initialized with a default, stub implementation.
 // If python-google.protobuf.cc is loaded, the function pointer is overridden

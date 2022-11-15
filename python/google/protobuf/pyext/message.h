@@ -34,6 +34,7 @@
 #ifndef GOOGLE_PROTOBUF_PYTHON_CPP_MESSAGE_H__
 #define GOOGLE_PROTOBUF_PYTHON_CPP_MESSAGE_H__
 
+#define PY_SSIZE_T_CLEAN
 #include <Python.h>
 
 #include <cstdint>
@@ -41,7 +42,7 @@
 #include <string>
 #include <unordered_map>
 
-#include <google/protobuf/stubs/common.h>
+#include "google/protobuf/stubs/common.h"
 
 namespace google {
 namespace protobuf {
