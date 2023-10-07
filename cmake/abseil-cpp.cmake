@@ -1,6 +1,14 @@
 # Setup our dependency on Abseil.
 
-set(ABSL_PROPAGATE_CXX_STD ON)
+if(protobuf_BUILD_TESTS)
+  # Tell Abseil to build test-only helpers.
+  set(ABSL_BUILD_TEST_HELPERS ON)
+
+  # We depend on googletest too, so just tell Abseil to use the same one we've
+  # already setup.
+  set(ABSL_USE_EXTERNAL_GOOGLETEST ON)
+  set(ABSL_FIND_GOOGLETEST OFF)
+endif()
 
 if(TARGET absl::strings)
   # If Abseil is included already, skip including it.
@@ -31,13 +39,23 @@ set(_protobuf_FIND_ABSL "if(NOT TARGET absl::strings)\n  find_package(absl CONFI
 
 if (BUILD_SHARED_LIBS AND MSVC)
   # On MSVC Abseil is bundled into a single DLL.
-  set(protobuf_ABSL_USED_TARGETS abseil_dll)
-
-  # As a workaround for https://github.com/abseil/abseil-cpp/issues/1118,
-  # make sure ABSL_CONSUME_DLL gets set for all subsequent builds.
-  add_definitions(-DABSL_CONSUME_DLL)
+  # This condition is necessary as of abseil 20230125.3 when abseil is consumed via add_subdirectory,
+  # the abseil_dll target  is named abseil_dll, while if abseil is consumed via find_package, the target
+  # is called absl::abseil_dll
+  # Once https://github.com/abseil/abseil-cpp/pull/1466 is merged and released in the minimum version of 
+  # abseil required by protobuf, it is possible to always link absl::abseil_dll and absl::abseil_test_dll
+  # and remove the if
+  if(protobuf_ABSL_PROVIDER STREQUAL "package")
+    set(protobuf_ABSL_USED_TARGETS absl::abseil_dll)
+    set(protobuf_ABSL_USED_TEST_TARGETS absl::abseil_test_dll)
+  else()
+    set(protobuf_ABSL_USED_TARGETS abseil_dll)
+    set(protobuf_ABSL_USED_TEST_TARGETS abseil_test_dll)
+  endif()
 else()
   set(protobuf_ABSL_USED_TARGETS
+    absl::absl_check
+    absl::absl_log
     absl::algorithm
     absl::base
     absl::bind_front
@@ -47,6 +65,7 @@ else()
     absl::cord
     absl::core_headers
     absl::debugging
+    absl::die_if_null
     absl::dynamic_annotations
     absl::flags
     absl::flat_hash_map
@@ -54,6 +73,8 @@ else()
     absl::function_ref
     absl::hash
     absl::layout
+    absl::log_initialize
+    absl::log_severity
     absl::memory
     absl::node_hash_map
     absl::node_hash_set
@@ -64,7 +85,11 @@ else()
     absl::strings
     absl::synchronization
     absl::time
+    absl::type_traits
     absl::utility
     absl::variant
+  )
+  set(protobuf_ABSL_USED_TEST_TARGETS
+    absl::scoped_mock_log
   )
 endif ()

@@ -1,32 +1,9 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 // This file contains a program for running the test suite in a separate
 // process.  The other alternative is to run the suite in-process.  See
@@ -65,9 +42,11 @@
 #include <future>
 #include <vector>
 
+#include "absl/log/absl_log.h"
 #include "absl/strings/str_format.h"
 #include "conformance/conformance.pb.h"
 #include "conformance_test.h"
+#include "google/protobuf/endian.h"
 
 using conformance::ConformanceResponse;
 using google::protobuf::ConformanceTestSuite;
@@ -76,7 +55,7 @@ using std::vector;
 
 #define STRINGIFY(x) #x
 #define TOSTRING(x) STRINGIFY(x)
-#define GOOGLE_CHECK_SYSCALL(call)                            \
+#define CHECK_SYSCALL(call)                            \
   if (call < 0) {                                      \
     perror(#call " " __FILE__ ":" TOSTRING(__LINE__)); \
     exit(1);                                           \
@@ -154,13 +133,14 @@ void ForkPipeRunner::RunTest(const std::string &test_name,
   }
   current_test_name_ = test_name;
 
-  uint32_t len = request.size();
+  uint32_t len =
+      internal::little_endian::FromHost(static_cast<uint32_t>(request.size()));
   CheckedWrite(write_fd_, &len, sizeof(uint32_t));
   CheckedWrite(write_fd_, request.c_str(), request.size());
 
   if (!TryRead(read_fd_, &len, sizeof(uint32_t))) {
     // We failed to read from the child, assume a crash and try to reap.
-    GOOGLE_LOG(INFO) << "Trying to reap child, pid=" << child_pid_;
+    ABSL_LOG(INFO) << "Trying to reap child, pid=" << child_pid_;
 
     int status = 0;
     waitpid(child_pid_, &status, WEXITED);
@@ -182,13 +162,14 @@ void ForkPipeRunner::RunTest(const std::string &test_name,
       absl::StrAppendFormat(&error_msg, "child killed by signal %d",
                             WTERMSIG(status));
     }
-    GOOGLE_LOG(INFO) << error_msg;
+    ABSL_LOG(INFO) << error_msg;
     child_pid_ = -1;
 
     response_obj.SerializeToString(response);
     return;
   }
 
+  len = internal::little_endian::ToHost(len);
   response->resize(len);
   CheckedRead(read_fd_, (void *)response->c_str(), len);
 }
@@ -254,7 +235,7 @@ int ForkPipeRunner::Run(int argc, char *argv[],
   return all_ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
-// TODO(haberman): make this work on Windows, instead of using these
+// TODO: make this work on Windows, instead of using these
 // UNIX-specific APIs.
 //
 // There is a platform-agnostic API in
@@ -288,22 +269,22 @@ void ForkPipeRunner::SpawnTestProgram() {
 
   if (pid) {
     // Parent.
-    GOOGLE_CHECK_SYSCALL(close(toproc_pipe_fd[0]));
-    GOOGLE_CHECK_SYSCALL(close(fromproc_pipe_fd[1]));
+    CHECK_SYSCALL(close(toproc_pipe_fd[0]));
+    CHECK_SYSCALL(close(fromproc_pipe_fd[1]));
     write_fd_ = toproc_pipe_fd[1];
     read_fd_ = fromproc_pipe_fd[0];
     child_pid_ = pid;
   } else {
     // Child.
-    GOOGLE_CHECK_SYSCALL(close(STDIN_FILENO));
-    GOOGLE_CHECK_SYSCALL(close(STDOUT_FILENO));
-    GOOGLE_CHECK_SYSCALL(dup2(toproc_pipe_fd[0], STDIN_FILENO));
-    GOOGLE_CHECK_SYSCALL(dup2(fromproc_pipe_fd[1], STDOUT_FILENO));
+    CHECK_SYSCALL(close(STDIN_FILENO));
+    CHECK_SYSCALL(close(STDOUT_FILENO));
+    CHECK_SYSCALL(dup2(toproc_pipe_fd[0], STDIN_FILENO));
+    CHECK_SYSCALL(dup2(fromproc_pipe_fd[1], STDOUT_FILENO));
 
-    GOOGLE_CHECK_SYSCALL(close(toproc_pipe_fd[0]));
-    GOOGLE_CHECK_SYSCALL(close(fromproc_pipe_fd[1]));
-    GOOGLE_CHECK_SYSCALL(close(toproc_pipe_fd[1]));
-    GOOGLE_CHECK_SYSCALL(close(fromproc_pipe_fd[0]));
+    CHECK_SYSCALL(close(toproc_pipe_fd[0]));
+    CHECK_SYSCALL(close(fromproc_pipe_fd[1]));
+    CHECK_SYSCALL(close(toproc_pipe_fd[1]));
+    CHECK_SYSCALL(close(fromproc_pipe_fd[0]));
 
     std::unique_ptr<char[]> executable(new char[executable_.size() + 1]);
     memcpy(executable.get(), executable_.c_str(), executable_.size());
@@ -311,21 +292,21 @@ void ForkPipeRunner::SpawnTestProgram() {
 
     std::vector<const char *> argv;
     argv.push_back(executable.get());
-    GOOGLE_LOG(INFO) << argv[0];
+    ABSL_LOG(INFO) << argv[0];
     for (size_t i = 0; i < executable_args_.size(); ++i) {
       argv.push_back(executable_args_[i].c_str());
-      GOOGLE_LOG(INFO) << executable_args_[i];
+      ABSL_LOG(INFO) << executable_args_[i];
     }
     argv.push_back(nullptr);
     // Never returns.
-    GOOGLE_CHECK_SYSCALL(execv(executable.get(), const_cast<char **>(argv.data())));
+    CHECK_SYSCALL(execv(executable.get(), const_cast<char **>(argv.data())));
   }
 }
 
 void ForkPipeRunner::CheckedWrite(int fd, const void *buf, size_t len) {
   if (static_cast<size_t>(write(fd, buf, len)) != len) {
-    GOOGLE_LOG(FATAL) << current_test_name_
-               << ": error writing to test program: " << strerror(errno);
+    ABSL_LOG(FATAL) << current_test_name_
+                    << ": error writing to test program: " << strerror(errno);
   }
 }
 
@@ -342,9 +323,9 @@ bool ForkPipeRunner::TryRead(int fd, void *buf, size_t len) {
     if (performance_) {
       status = future.wait_for(std::chrono::seconds(5));
       if (status == std::future_status::timeout) {
-        GOOGLE_LOG(ERROR) << current_test_name_ << ": timeout from test program";
+        ABSL_LOG(ERROR) << current_test_name_ << ": timeout from test program";
         kill(child_pid_, SIGQUIT);
-        // TODO(sandyzhang): Only log in flag-guarded mode, since reading output
+        // TODO: Only log in flag-guarded mode, since reading output
         // from SIGQUIT is slow and verbose.
         std::vector<char> err;
         err.resize(5000);
@@ -355,7 +336,8 @@ bool ForkPipeRunner::TryRead(int fd, void *buf, size_t len) {
               read(fd, (void *)&err[err_ofs], err.size() - err_ofs);
           err_ofs += err_bytes_read;
         } while (err_bytes_read > 0 && err_ofs < err.size());
-        GOOGLE_LOG(ERROR) << "child_pid_=" << child_pid_ << " SIGQUIT: \n" << &err[0];
+        ABSL_LOG(ERROR) << "child_pid_=" << child_pid_ << " SIGQUIT: \n"
+                        << &err[0];
         return false;
       }
     } else {
@@ -363,11 +345,13 @@ bool ForkPipeRunner::TryRead(int fd, void *buf, size_t len) {
     }
     ssize_t bytes_read = future.get();
     if (bytes_read == 0) {
-      GOOGLE_LOG(ERROR) << current_test_name_ << ": unexpected EOF from test program";
+      ABSL_LOG(ERROR) << current_test_name_
+                      << ": unexpected EOF from test program";
       return false;
     } else if (bytes_read < 0) {
-      GOOGLE_LOG(ERROR) << current_test_name_
-                 << ": error reading from test program: " << strerror(errno);
+      ABSL_LOG(ERROR) << current_test_name_
+                      << ": error reading from test program: "
+                      << strerror(errno);
       return false;
     }
 
@@ -380,8 +364,8 @@ bool ForkPipeRunner::TryRead(int fd, void *buf, size_t len) {
 
 void ForkPipeRunner::CheckedRead(int fd, void *buf, size_t len) {
   if (!TryRead(fd, buf, len)) {
-    GOOGLE_LOG(FATAL) << current_test_name_
-               << ": error reading from test program: " << strerror(errno);
+    ABSL_LOG(FATAL) << current_test_name_
+                    << ": error reading from test program: " << strerror(errno);
   }
 }
 

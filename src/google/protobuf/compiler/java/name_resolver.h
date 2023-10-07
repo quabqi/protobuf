@@ -1,40 +1,15 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 #ifndef GOOGLE_PROTOBUF_COMPILER_JAVA_NAME_RESOLVER_H__
 #define GOOGLE_PROTOBUF_COMPILER_JAVA_NAME_RESOLVER_H__
 
 #include <string>
 
-#include "google/protobuf/stubs/logging.h"
-#include "google/protobuf/stubs/common.h"
 #include "absl/container/flat_hash_map.h"
 #include "google/protobuf/compiler/java/options.h"
 #include "google/protobuf/port.h"
@@ -80,7 +55,7 @@ class ClassNameResolver {
   // Check whether there is any type defined in the proto file that has
   // the given class name.
   bool HasConflictingClassName(const FileDescriptor* file,
-                               const std::string& classname,
+                               absl::string_view classname,
                                NameEquality equality_mode);
 
   // Gets the name of the outer class that holds descriptor information.
@@ -124,20 +99,23 @@ class ClassNameResolver {
   //   com.package.OuterClass$OuterMessage$InnerMessage
   std::string GetJavaImmutableClassName(const Descriptor* descriptor);
   std::string GetJavaImmutableClassName(const EnumDescriptor* descriptor);
+  std::string GetJavaImmutableClassName(const ServiceDescriptor* descriptor);
   std::string GetKotlinFactoryName(const Descriptor* descriptor);
   std::string GetKotlinExtensionsClassName(const Descriptor* descriptor);
+  std::string GetKotlinExtensionsClassNameEscaped(const Descriptor* descriptor);
   std::string GetJavaMutableClassName(const Descriptor* descriptor);
   std::string GetJavaMutableClassName(const EnumDescriptor* descriptor);
+  std::string GetJavaMutableClassName(const ServiceDescriptor* descriptor);
   // Gets the outer class and the actual class for downgraded mutable messages.
   std::string GetDowngradedFileClassName(const FileDescriptor* file);
   std::string GetDowngradedClassName(const Descriptor* descriptor);
 
   // Get the full name of a Java class by prepending the Java package name
   // or outer class name.
-  std::string GetClassFullName(const std::string& name_without_package,
+  std::string GetClassFullName(absl::string_view name_without_package,
                                const FileDescriptor* file, bool immutable,
                                bool is_own_file);
-  std::string GetClassFullName(const std::string& name_without_package,
+  std::string GetClassFullName(absl::string_view name_without_package,
                                const FileDescriptor* file, bool immutable,
                                bool is_own_file, bool kotlin);
 
@@ -145,9 +123,9 @@ class ClassNameResolver {
 
  private:
   // Get the Java Class style full name of a message.
-  std::string GetJavaClassFullName(const std::string& name_without_package,
+  std::string GetJavaClassFullName(absl::string_view name_without_package,
                                    const FileDescriptor* file, bool immutable);
-  std::string GetJavaClassFullName(const std::string& name_without_package,
+  std::string GetJavaClassFullName(absl::string_view name_without_package,
                                    const FileDescriptor* file, bool immutable,
                                    bool kotlin);
   // Caches the result to provide better performance.

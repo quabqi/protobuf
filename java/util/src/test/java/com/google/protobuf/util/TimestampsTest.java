@@ -1,32 +1,9 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 package com.google.protobuf.util;
 
@@ -74,11 +51,39 @@ public class TimestampsTest {
       Timestamp.newBuilder().setSeconds(Long.MIN_VALUE).setNanos(Integer.MIN_VALUE).build();
 
   @Test
+  public void testNow() {
+    Timestamp now = Timestamps.now();
+    long epochSeconds = System.currentTimeMillis() / 1000;
+    assertThat(now.getSeconds()).isAtLeast(epochSeconds - 1);
+    assertThat(now.getSeconds()).isAtMost(epochSeconds + 1);
+  }
+
+  @Test
+  public void testNowWithSubMillisecondPrecision() {
+    try {
+      // throws if we're not on Java9+
+      Class.forName("java.lang.Runtime$Version");
+    } catch (ClassNotFoundException e) {
+      // ignored; we're not on Java 9+
+      return;
+    }
+
+    // grab 100 timestamps, and ensure that at least 1 of them has sub-millisecond precision
+    for (int i = 0; i < 100; i++) {
+      Timestamp now = Timestamps.now();
+      Timestamp nowWithMilliPrecision = Timestamps.fromMillis(Timestamps.toMillis(now));
+      if (!now.equals(nowWithMilliPrecision)) {
+        return;
+      }
+    }
+    assertWithMessage("no timestamp had sub-millisecond precision").fail();
+  }
+
+  @Test
   public void testMinMaxAreValid() {
     assertThat(Timestamps.isValid(Timestamps.MAX_VALUE)).isTrue();
     assertThat(Timestamps.isValid(Timestamps.MIN_VALUE)).isTrue();
   }
-
 
   @Test
   public void testIsValid_false() {
@@ -475,7 +480,7 @@ public class TimestampsTest {
     Timestamp timestamp = Timestamps.fromDate(date);
     assertThat(Timestamps.toString(timestamp)).isEqualTo("1970-01-01T00:00:01.111Z");
   }
-  
+
   @Test
   public void testFromSqlTimestamp_beforeEpoch() {
     Date date = new java.sql.Timestamp(-1111);
@@ -615,6 +620,7 @@ public class TimestampsTest {
     } catch (IllegalArgumentException expected) {
     }
   }
+
   @Test
   public void testInvalidMaxMicrosecondsOverflow() {
     try {
@@ -686,13 +692,12 @@ public class TimestampsTest {
 
   @Test
   public void testIllegalArgumentExceptionForMaxMicroseconds() {
-   try {
+    try {
       Timestamps.fromMicros(Long.MAX_VALUE);
       assertWithMessage("Expected an IllegalArgumentException to be thrown").fail();
     } catch (IllegalArgumentException expected) {
     }
   }
-
 
   @Test
   public void testIllegalArgumentExceptionForMaxMilliseconds() {
@@ -717,7 +722,6 @@ public class TimestampsTest {
     } catch (IllegalArgumentException expected) {
     }
   }
-
 
   @Test
   public void testIllegalArgumentExceptionForMinMilliseconds() {

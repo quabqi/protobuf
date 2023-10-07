@@ -1,32 +1,9 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 // This test insures that
 // csharp/src/Google.Protobuf/Reflection/Descriptor.cs  match exactly
@@ -66,8 +43,8 @@ class MockErrorCollector : public MultiFileErrorCollector {
   std::string text_;
 
   // implements ErrorCollector ---------------------------------------
-  void AddError(const std::string& filename, int line, int column,
-                const std::string& message) {
+  void RecordError(absl::string_view filename, int line, int column,
+                   absl::string_view message) {
     absl::SubstituteAndAppend(&text_, "$0:$1:$2: $3\n", filename, line, column,
                               message);
   }
@@ -83,9 +60,9 @@ class MockGeneratorContext : public GeneratorContext {
     std::string expected_contents = *it->second;
 
     std::string actual_contents;
-    GOOGLE_CHECK_OK(
-        File::GetContentsAsText(TestSourceDir() + "/" + physical_filename,
-                          &actual_contents, true))
+    ABSL_CHECK_OK(File::GetContentsAsText(
+        absl::StrCat(TestSourceDir(), "/", physical_filename), &actual_contents,
+        true))
         << "Unable to get " << physical_filename;
     EXPECT_TRUE(actual_contents == expected_contents)
       << physical_filename << " needs to be regenerated.  Please run "
@@ -131,7 +108,7 @@ TEST(CsharpBootstrapTest, GeneratedCsharpDescriptorMatches) {
   // only distribution).
   std::string descriptor_file_name =
       "../csharp/src/Google.Protobuf/Reflection/Descriptor.cs";
-  if (!File::Exists(TestSourceDir() + "/" + descriptor_file_name)) {
+  if (!File::Exists(absl::StrCat(TestSourceDir(), "/", descriptor_file_name))) {
     return;
   }
 

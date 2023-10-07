@@ -47,19 +47,21 @@ namespace internal {
 using ::google::protobuf::internal::DownCast;
 
 const char* TcParser::GenericFallback(PROTOBUF_TC_PARAM_DECL) {
-  return GenericFallbackImpl<Message, UnknownFieldSet>(PROTOBUF_TC_PARAM_PASS);
+  PROTOBUF_MUSTTAIL return GenericFallbackImpl<Message, UnknownFieldSet>(
+      PROTOBUF_TC_PARAM_PASS);
 }
 
 const char* TcParser::ReflectionFallback(PROTOBUF_TC_PARAM_DECL) {
+  bool must_fallback_to_generic = (ptr == nullptr);
+  if (PROTOBUF_PREDICT_FALSE(must_fallback_to_generic)) {
+    PROTOBUF_MUSTTAIL return GenericFallback(PROTOBUF_TC_PARAM_PASS);
+  }
+
   SyncHasbits(msg, hasbits, table);
   uint32_t tag = data.tag();
   if (tag == 0 || (tag & 7) == WireFormatLite::WIRETYPE_END_GROUP) {
     ctx->SetLastTag(tag);
     return ptr;
-  }
-
-  if (MustFallbackToGeneric(PROTOBUF_TC_PARAM_PASS)) {
-    PROTOBUF_MUSTTAIL return GenericFallback(PROTOBUF_TC_PARAM_PASS);
   }
 
   auto* full_msg = DownCast<Message*>(msg);

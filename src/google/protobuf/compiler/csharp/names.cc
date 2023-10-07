@@ -1,32 +1,9 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 // Author: kenton@google.com (Kenton Varda)
 //  Based on original Protocol Buffers design by
@@ -36,7 +13,10 @@
 
 #include <string>
 
+#include "absl/strings/match.h"
 #include "absl/strings/str_replace.h"
+#include "absl/strings/string_view.h"
+#include "absl/strings/strip.h"
 #include "google/protobuf/compiler/csharp/names.h"
 #include "google/protobuf/descriptor.pb.h"
 
@@ -50,7 +30,7 @@ namespace csharp {
 
 namespace {
 
-std::string StripDotProto(const std::string& proto_file) {
+absl::string_view StripDotProto(absl::string_view proto_file) {
   int lastindex = proto_file.find_last_of('.');
   return proto_file.substr(0, lastindex);
 }
@@ -64,21 +44,21 @@ std::string GetFileNameBase(const FileDescriptor* descriptor) {
     return UnderscoresToPascalCase(StripDotProto(base));
 }
 
-std::string ToCSharpName(const std::string& name, const FileDescriptor* file) {
-  std::string result = GetFileNamespace(file);
-  if (!result.empty()) {
-    result += '.';
-  }
-  std::string classname;
-  if (file->package().empty()) {
-    classname = name;
-  } else {
-    // Strip the proto package from full_name since we've replaced it with
-    // the C# namespace.
-    classname = name.substr(file->package().size() + 1);
-  }
-  result += absl::StrReplaceAll(classname, {{".", ".Types."}});
-  return "global::" + result;
+std::string ToCSharpName(absl::string_view name, const FileDescriptor* file) {
+    std::string result = GetFileNamespace(file);
+    if (!result.empty()) {
+      result += '.';
+    }
+    absl::string_view classname;
+    if (file->package().empty()) {
+      classname = name;
+    } else {
+      // Strip the proto package from full_name since we've replaced it with
+      // the C# namespace.
+      classname = name.substr(file->package().size() + 1);
+    }
+    return absl::StrCat("global::", result,
+                        absl::StrReplaceAll(classname, {{".", ".Types."}}));
 }
 
 }  // namespace
@@ -101,7 +81,7 @@ std::string GetClassName(const EnumDescriptor* descriptor) {
 std::string GetReflectionClassUnqualifiedName(const FileDescriptor* descriptor) {
   // TODO: Detect collisions with existing messages,
   // and append an underscore if necessary.
-  return GetFileNameBase(descriptor) + "Reflection";
+  return absl::StrCat(GetFileNameBase(descriptor), "Reflection");
 }
 
 std::string GetReflectionClassName(const FileDescriptor* descriptor) {
@@ -109,59 +89,54 @@ std::string GetReflectionClassName(const FileDescriptor* descriptor) {
   if (!result.empty()) {
     result += '.';
   }
-  result += GetReflectionClassUnqualifiedName(descriptor);
-  return "global::" + result;
+  return absl::StrCat("global::", result,
+                      GetReflectionClassUnqualifiedName(descriptor));
 }
 
 std::string GetExtensionClassUnqualifiedName(const FileDescriptor* descriptor) {
   // TODO: Detect collisions with existing messages,
   // and append an underscore if necessary.
-  return GetFileNameBase(descriptor) + "Extensions";
+  return absl::StrCat(GetFileNameBase(descriptor), "Extensions");
 }
 
 std::string GetOutputFile(const FileDescriptor* descriptor,
-                          const std::string file_extension,
-                          const bool generate_directories,
-                          const std::string base_namespace,
+                          absl::string_view file_extension,
+                          bool generate_directories,
+                          absl::string_view base_namespace,
                           std::string* error) {
-  std::string relative_filename = GetFileNameBase(descriptor) + file_extension;
+  std::string relative_filename =
+      absl::StrCat(GetFileNameBase(descriptor), file_extension);
   if (!generate_directories) {
     return relative_filename;
   }
   std::string ns = GetFileNamespace(descriptor);
-  std::string namespace_suffix = ns;
+  absl::string_view namespace_suffix = ns;
   if (!base_namespace.empty()) {
     // Check that the base_namespace is either equal to or a leading part of
     // the file namespace. This isn't just a simple prefix; "Foo.B" shouldn't
     // be regarded as a prefix of "Foo.Bar". The simplest option is to add "."
     // to both.
-    std::string extended_ns = ns + ".";
-    if (extended_ns.find(base_namespace + ".") != 0) {
-      *error = "Namespace " + ns + " is not a prefix namespace of base namespace " + base_namespace;
-      return ""; // This will be ignored, because we've set an error.
-    }
-    namespace_suffix = ns.substr(base_namespace.length());
-    if (namespace_suffix.find('.') == 0) {
-      namespace_suffix = namespace_suffix.substr(1);
+    if (!absl::ConsumePrefix(&namespace_suffix, base_namespace) ||
+        (!namespace_suffix.empty() &&
+         !absl::ConsumePrefix(&namespace_suffix, "."))) {
+      *error = absl::StrCat("Namespace ", ns,
+                            " is not a prefix namespace of base namespace ",
+                            base_namespace);
+      return "";  // This will be ignored, because we've set an error.
     }
   }
 
-  std::string namespace_dir =
-      absl::StrReplaceAll(namespace_suffix, {{".", "/"}});
-  if (!namespace_dir.empty()) {
-    namespace_dir += "/";
-  }
-  return namespace_dir + relative_filename;
+  return absl::StrCat(absl::StrReplaceAll(namespace_suffix, {{".", "/"}}),
+                      namespace_suffix.empty() ? "" : "/", relative_filename);
 }
 
-std::string UnderscoresToPascalCase(const std::string& input) {
+std::string UnderscoresToPascalCase(absl::string_view input) {
   return UnderscoresToCamelCase(input, true);
 }
 
-// TODO(jtattermusch): can we reuse a utility function?
-std::string UnderscoresToCamelCase(const std::string& input,
-                                   bool cap_next_letter,
-                                   bool preserve_period) {
+// TODO: can we reuse a utility function?
+std::string UnderscoresToCamelCase(absl::string_view input,
+                                   bool cap_next_letter, bool preserve_period) {
   std::string result;
 
   // Note:  I distrust ctype.h due to locales.

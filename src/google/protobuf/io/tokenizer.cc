@@ -1,32 +1,9 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 // Author: kenton@google.com (Kenton Varda)
 //  Based on original Protocol Buffers design by
@@ -91,7 +68,8 @@
 #include "google/protobuf/io/tokenizer.h"
 
 #include "google/protobuf/stubs/common.h"
-#include "google/protobuf/stubs/logging.h"
+#include "absl/log/absl_check.h"
+#include "absl/log/absl_log.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/str_format.h"
 #include "google/protobuf/io/strtod.h"
@@ -234,6 +212,7 @@ Tokenizer::Tokenizer(ZeroCopyInputStream* input,
   current_.column = 0;
   current_.end_column = 0;
   current_.type = TYPE_START;
+  previous_ = current_;
 
   Refresh();
 }
@@ -567,8 +546,8 @@ void Tokenizer::ConsumeBlockComment(std::string* content) {
           "\"/*\" inside block comment.  Block comments cannot be nested.");
     } else if (current_char_ == '\0') {
       AddError("End-of-file inside block comment.");
-      error_collector_->AddError(start_line, start_column,
-                                 "  Comment started here.");
+      error_collector_->RecordError(start_line, start_column,
+                                    "  Comment started here.");
       if (content != NULL) StopRecording();
       break;
     }
@@ -686,7 +665,7 @@ bool Tokenizer::Next() {
               current_.line == previous_.line &&
               current_.column == previous_.end_column) {
             // We don't accept syntax like "blah.123".
-            error_collector_->AddError(
+            error_collector_->RecordError(
                 line_, column_ - 2,
                 "Need space between identifier and decimal point.");
           }
@@ -705,7 +684,7 @@ bool Tokenizer::Next() {
       } else {
         // Check if the high order bit is set.
         if (current_char_ & 0x80) {
-          error_collector_->AddError(
+          error_collector_->RecordError(
               line_, column_,
               absl::StrFormat("Interpreting non ascii codepoint %d.",
                               static_cast<unsigned char>(current_char_)));
@@ -941,7 +920,8 @@ bool Tokenizer::NextWithComments(std::string* prev_trailing_comments,
             // makes no sense to attach a comment to the following token.
             collector.Flush();
           }
-          if (prev_line == line_ || trailing_comment_end_line == line_) {
+          if (result &&
+              (prev_line == line_ || trailing_comment_end_line == line_)) {
             // When previous token and this one are on the same line, or
             // even if a multi-line trailing comment ends on the same line
             // as this token, it's unclear to what token the comment
@@ -1034,7 +1014,7 @@ bool Tokenizer::ParseInteger(const std::string& text, uint64_t max_value,
 double Tokenizer::ParseFloat(const std::string& text) {
   double result = 0;
   if (!TryParseFloat(text, &result)) {
-    GOOGLE_LOG(DFATAL)
+    ABSL_DLOG(FATAL)
         << " Tokenizer::ParseFloat() passed text that could not have been"
            " tokenized as a float: "
         << absl::CEscape(text);
@@ -1129,8 +1109,8 @@ static inline bool IsTrailSurrogate(uint32_t code_point) {
 // Combine a head and trail surrogate into a single Unicode code point.
 static uint32_t AssembleUTF16(uint32_t head_surrogate,
                               uint32_t trail_surrogate) {
-  GOOGLE_DCHECK(IsHeadSurrogate(head_surrogate));
-  GOOGLE_DCHECK(IsTrailSurrogate(trail_surrogate));
+  ABSL_DCHECK(IsHeadSurrogate(head_surrogate));
+  ABSL_DCHECK(IsTrailSurrogate(trail_surrogate));
   return 0x10000 + (((head_surrogate - kMinHeadSurrogate) << 10) |
                     (trail_surrogate - kMinTrailSurrogate));
 }
@@ -1179,9 +1159,10 @@ void Tokenizer::ParseStringAppend(const std::string& text,
   // empty, it's invalid, so we'll just return).
   const size_t text_size = text.size();
   if (text_size == 0) {
-    GOOGLE_LOG(DFATAL) << " Tokenizer::ParseStringAppend() passed text that could not"
-                   " have been tokenized as a string: "
-                << absl::CEscape(text);
+    ABSL_DLOG(FATAL)
+        << " Tokenizer::ParseStringAppend() passed text that could not"
+           " have been tokenized as a string: "
+        << absl::CEscape(text);
     return;
   }
 

@@ -1,32 +1,9 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 // Author: kenton@google.com (Kenton Varda)
 //  Based on original Protocol Buffers design by
@@ -37,12 +14,11 @@
 #ifndef GOOGLE_PROTOBUF_DESCRIPTOR_DATABASE_H__
 #define GOOGLE_PROTOBUF_DESCRIPTOR_DATABASE_H__
 
-
-#include <map>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/container/btree_map.h"
 #include "google/protobuf/descriptor.h"
 #include "google/protobuf/port.h"
 
@@ -171,7 +147,7 @@ class PROTOBUF_EXPORT SimpleDescriptorDatabase : public DescriptorDatabase {
   // Adds the FileDescriptorProto to the database, making a copy.  The object
   // can be deleted after Add() returns.  Returns false if the file conflicted
   // with a file already in the database, in which case an error will have
-  // been written to GOOGLE_LOG(ERROR).
+  // been written to ABSL_LOG(ERROR).
   bool Add(const FileDescriptorProto& file);
 
   // Adds the FileDescriptorProto to the database and takes ownership of it.
@@ -203,7 +179,7 @@ class PROTOBUF_EXPORT SimpleDescriptorDatabase : public DescriptorDatabase {
     // Helpers to recursively add particular descriptors and all their contents
     // to the index.
     bool AddFile(const FileDescriptorProto& file, Value value);
-    bool AddSymbol(const std::string& name, Value value);
+    bool AddSymbol(absl::string_view name, Value value);
     bool AddNestedExtensions(const std::string& filename,
                              const DescriptorProto& message_type, Value value);
     bool AddExtension(const std::string& filename,
@@ -217,9 +193,9 @@ class PROTOBUF_EXPORT SimpleDescriptorDatabase : public DescriptorDatabase {
     void FindAllFileNames(std::vector<std::string>* output);
 
    private:
-    std::map<std::string, Value> by_name_;
-    std::map<std::string, Value> by_symbol_;
-    std::map<std::pair<std::string, int>, Value> by_extension_;
+    absl::btree_map<std::string, Value> by_name_;
+    absl::btree_map<std::string, Value> by_symbol_;
+    absl::btree_map<std::pair<std::string, int>, Value> by_extension_;
 
     // Invariant:  The by_symbol_ map does not contain any symbols which are
     // prefixes of other symbols in the map.  For example, "foo.bar" is a

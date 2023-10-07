@@ -4,7 +4,7 @@
   <parent>
     <groupId>com.google.protobuf</groupId>
     <artifactId>protobuf-parent</artifactId>
-    <version>3.21.9</version>
+    <version>3.24.0</version>
   </parent>
 
   <artifactId>protobuf-javalite</artifactId>
@@ -125,6 +125,7 @@
                     <include>Internal.java</include>
                     <include>InvalidProtocolBufferException.java</include>
                     <include>IterableByteBufferInputStream.java</include>
+                    <include>Java8Compatibility.java</include>
                     <include>JavaType.java</include>
                     <include>LazyField.java</include>
                     <include>LazyFieldLite.java</include>
@@ -156,7 +157,6 @@
                     <include>ProtoSyntax.java</include>
                     <include>Protobuf.java</include>
                     <include>ProtobufArrayList.java</include>
-                    <include>ProtobufLists.java</include>
                     <include>ProtocolStringList.java</include>
                     <include>RawMessageInfo.java</include>
                     <include>Reader.java</include>

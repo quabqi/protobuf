@@ -1,32 +1,9 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 // Author: kenton@google.com (Kenton Varda)
 //  Based on original Protocol Buffers design by
@@ -40,7 +17,6 @@
 #include <vector>
 
 #include "google/protobuf/stubs/common.h"
-#include "google/protobuf/stubs/logging.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/substitute.h"
 #include "google/protobuf/io/zero_copy_stream_impl.h"
@@ -55,7 +31,7 @@ namespace {
 // ===================================================================
 // Data-Driven Test Infrastructure
 
-// TODO(kenton):  This is copied from coded_stream_unittest.  This is
+// TODO:  This is copied from coded_stream_unittest.  This is
 //   temporary until these features are integrated into gTest itself.
 
 // TEST_1D and TEST_2D are macros I'd eventually like to see added to
@@ -162,7 +138,7 @@ class TestErrorCollector : public ErrorCollector {
   std::string text_;
 
   // implements ErrorCollector ---------------------------------------
-  void AddError(int line, int column, const std::string& message) {
+  void RecordError(int line, int column, absl::string_view message) override {
     absl::SubstituteAndAppend(&text_, "$0:$1: $2\n", line, column, message);
   }
 };
@@ -644,10 +620,23 @@ inline std::ostream& operator<<(std::ostream& out,
   return out << absl::CEscape(test_case.input);
 }
 
+// clang-format off
 DocCommentCase kDocCommentCases[] = {
     {"prev next",
 
      "",
+     {},
+     ""},
+
+    {"prev // no next token\n",
+
+     " no next token\n",
+     {},
+     ""},
+
+    {"prev // no next token and no trailing newline",
+
+     " no next token and no trailing newline",
      {},
      ""},
 
@@ -781,7 +770,7 @@ DocCommentCase kDocCommentCases[] = {
      prev /* a single block comment
          that spans multiple lines
          is detached if it ends
-         on the same line as next */ next"
+         on the same line as next */ next
      )pb",
 
      "",
@@ -792,7 +781,7 @@ DocCommentCase kDocCommentCases[] = {
      ""},
 
     {R"pb(
-     prev /* trailing */ /* leading */ next"
+       prev /* trailing */ /* leading */ next
      )pb",
 
      " trailing ",
@@ -803,13 +792,26 @@ DocCommentCase kDocCommentCases[] = {
      prev /* multi-line
           trailing */ /* an oddly
                       placed detached */ /* an oddly
-                                         placed leading */ next"
+                                         placed leading */ next
      )pb",
 
      " multi-line\ntrailing ",
      {" an oddly\nplaced detached "},
      " an oddly\nplaced leading "},
+
+    {R"pb(
+       prev  // trailing with newline
+       // detached
+       /* another detached */
+       // leading but no next token to attach it to
+     )pb",
+
+     " trailing with newline\n",
+     {" detached\n", " another detached ",
+      " leading but no next token to attach it to\n"},
+     ""},
 };
+// clang-format on
 
 TEST_2D(TokenizerTest, DocComments, kDocCommentCases, kBlockSizes) {
   // Set up the tokenizer.
@@ -823,8 +825,8 @@ TEST_2D(TokenizerTest, DocComments, kDocCommentCases, kBlockSizes) {
                          kDocCommentCases_case.input.size(), kBlockSizes_case);
   Tokenizer tokenizer2(&input2, &error_collector);
 
-  tokenizer.Next();
-  tokenizer2.Next();
+  EXPECT_TRUE(tokenizer.Next());
+  EXPECT_TRUE(tokenizer2.Next());
 
   EXPECT_EQ("prev", tokenizer.current().text);
   EXPECT_EQ("prev", tokenizer2.current().text);
@@ -832,11 +834,13 @@ TEST_2D(TokenizerTest, DocComments, kDocCommentCases, kBlockSizes) {
   std::string prev_trailing_comments;
   std::vector<std::string> detached_comments;
   std::string next_leading_comments;
-  tokenizer.NextWithComments(&prev_trailing_comments, &detached_comments,
-                             &next_leading_comments);
-  tokenizer2.NextWithComments(NULL, NULL, NULL);
-  EXPECT_EQ("next", tokenizer.current().text);
-  EXPECT_EQ("next", tokenizer2.current().text);
+  bool has_next = tokenizer.NextWithComments(
+      &prev_trailing_comments, &detached_comments, &next_leading_comments);
+  EXPECT_EQ(has_next, tokenizer2.NextWithComments(nullptr, nullptr, nullptr));
+  if (has_next) {
+    EXPECT_EQ("next", tokenizer.current().text);
+    EXPECT_EQ("next", tokenizer2.current().text);
+  }
 
   EXPECT_EQ(kDocCommentCases_case.prev_trailing_comments,
             prev_trailing_comments);
@@ -857,7 +861,7 @@ TEST_2D(TokenizerTest, DocComments, kDocCommentCases, kBlockSizes) {
 // -------------------------------------------------------------------
 
 // Test parse helpers.
-// TODO(b/225783758): Add a fuzz test for this.
+// TODO: Add a fuzz test for this.
 TEST_F(TokenizerTest, ParseInteger) {
   EXPECT_EQ(0, ParseInteger("0"));
   EXPECT_EQ(123, ParseInteger("123"));
@@ -1021,7 +1025,7 @@ TEST_F(TokenizerTest, ParseFloat) {
   EXPECT_EQ(0.0, Tokenizer::ParseFloat("1e-9999999999999999999999999999"));
   EXPECT_EQ(HUGE_VAL, Tokenizer::ParseFloat("1e+9999999999999999999999999999"));
 
-#ifdef PROTOBUF_HAS_DEATH_TEST  // death tests do not work on Windows yet
+#if GTEST_HAS_DEATH_TEST  // death tests do not work on Windows yet
   // Test invalid integers that will never be tokenized as integers.
   EXPECT_DEBUG_DEATH(
       Tokenizer::ParseFloat("zxy"),
@@ -1032,7 +1036,7 @@ TEST_F(TokenizerTest, ParseFloat) {
   EXPECT_DEBUG_DEATH(
       Tokenizer::ParseFloat("-1.0"),
       "passed text that could not have been tokenized as a float");
-#endif  // PROTOBUF_HAS_DEATH_TEST
+#endif  // GTEST_HAS_DEATH_TEST
 }
 
 TEST_F(TokenizerTest, ParseString) {
@@ -1076,11 +1080,11 @@ TEST_F(TokenizerTest, ParseString) {
   EXPECT_EQ("\\U00110000\\U00200000\\Uffffffff", output);
 
   // Test invalid strings that will never be tokenized as strings.
-#ifdef PROTOBUF_HAS_DEATH_TEST  // death tests do not work on Windows yet
+#if GTEST_HAS_DEATH_TEST  // death tests do not work on Windows yet
   EXPECT_DEBUG_DEATH(
       Tokenizer::ParseString("", &output),
       "passed text that could not have been tokenized as a string");
-#endif  // PROTOBUF_HAS_DEATH_TEST
+#endif  // GTEST_HAS_DEATH_TEST
 }
 
 TEST_F(TokenizerTest, ParseStringAppend) {

@@ -1,32 +1,9 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 // Author: kenton@google.com (Kenton Varda)
 //  Based on original Protocol Buffers design by
@@ -39,25 +16,23 @@
 #include <tuple>
 #include <vector>
 
-#include "google/protobuf/stubs/logging.h"
-#include "google/protobuf/stubs/common.h"
 #include "google/protobuf/descriptor.pb.h"
 #include <gmock/gmock.h>
-#include "google/protobuf/testing/googletest.h"
 #include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/absl_check.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "absl/types/optional.h"
 #include "google/protobuf/io/zero_copy_stream.h"
-#include "google/protobuf/io/zero_copy_stream_impl.h"
 #include "google/protobuf/io/zero_copy_stream_impl_lite.h"
 
 namespace google {
 namespace protobuf {
 namespace io {
+namespace {
 using ::testing::AllOf;
 using ::testing::ElementsAre;
-using ::testing::ExplainMatchResult;
 using ::testing::Field;
 using ::testing::IsEmpty;
 using ::testing::MatchesRegex;
@@ -65,7 +40,7 @@ using ::testing::MatchesRegex;
 class PrinterTest : public testing::Test {
  protected:
   ZeroCopyOutputStream* output() {
-    GOOGLE_CHECK(stream_.has_value());
+    ABSL_CHECK(stream_.has_value());
     return &*stream_;
   }
   absl::string_view written() {
@@ -192,6 +167,13 @@ class FakeAnnotationCollector : public AnnotationCollector {
         Record{begin_offset, end_offset, file_path, path});
   }
 
+  void AddAnnotation(size_t begin_offset, size_t end_offset,
+                     const std::string& file_path, const std::vector<int>& path,
+                     absl::optional<Semantic> semantic) override {
+    annotations_.emplace_back(
+        Record{begin_offset, end_offset, file_path, path, semantic});
+  }
+
   void AddAnnotationNew(Annotation& a) override {
     GeneratedCodeInfo::Annotation annotation;
     annotation.ParseFromString(a.second);
@@ -205,14 +187,17 @@ class FakeAnnotationCollector : public AnnotationCollector {
   }
 
   struct Record {
-    size_t start, end;
+    size_t start = 0;
+    size_t end = 0;
     std::string file_path;
     std::vector<int> path;
+    absl::optional<Semantic> semantic;
 
     friend std::ostream& operator<<(std::ostream& out, const Record& record) {
       return out << "Record{" << record.start << ", " << record.end << ", \""
                  << record.file_path << "\", ["
-                 << absl::StrJoin(record.path, ", ") << "]}";
+                 << absl::StrJoin(record.path, ", ") << "], "
+                 << record.semantic.value_or(kNone) << "}";
     }
   };
 
@@ -222,16 +207,18 @@ class FakeAnnotationCollector : public AnnotationCollector {
   std::vector<Record> annotations_;
 };
 
-template <typename Start, typename End, typename FilePath, typename Path>
-testing::Matcher<FakeAnnotationCollector::Record> Annotation(Start start,
-                                                             End end,
-                                                             FilePath file_path,
-                                                             Path path) {
-  return AllOf(Field("start", &FakeAnnotationCollector::Record::start, start),
-               Field("end", &FakeAnnotationCollector::Record::end, end),
-               Field("file_path", &FakeAnnotationCollector::Record::file_path,
-                     file_path),
-               Field("path", &FakeAnnotationCollector::Record::path, path));
+template <typename Start, typename End, typename FilePath, typename Path,
+          typename Semantic = absl::optional<AnnotationCollector::Semantic>>
+testing::Matcher<FakeAnnotationCollector::Record> Annotation(
+    Start start, End end, FilePath file_path, Path path,
+    Semantic semantic = absl::nullopt) {
+  return AllOf(
+      Field("start", &FakeAnnotationCollector::Record::start, start),
+      Field("end", &FakeAnnotationCollector::Record::end, end),
+      Field("file_path", &FakeAnnotationCollector::Record::file_path,
+            file_path),
+      Field("path", &FakeAnnotationCollector::Record::path, path),
+      Field("semantic", &FakeAnnotationCollector::Record::semantic, semantic));
 }
 
 TEST_F(PrinterTest, AnnotateMap) {
@@ -548,34 +535,6 @@ TEST_F(PrinterTest, Emit) {
             "}\n");
 }
 
-TEST_F(PrinterTest, EmitKeepsExtraLine) {
-  {
-    Printer printer(output());
-    printer.Emit(R"cc(
-
-      class Foo {
-        int x, y, z;
-      };
-    )cc");
-    printer.Emit(R"java(
-
-      public final class Bar {
-        Bar() {}
-      }
-    )java");
-  }
-
-  EXPECT_EQ(written(),
-            "\n"
-            "class Foo {\n"
-            "  int x, y, z;\n"
-            "};\n"
-            "\n"
-            "public final class Bar {\n"
-            "  Bar() {}\n"
-            "}\n");
-}
-
 TEST_F(PrinterTest, EmitWithSubs) {
   {
     Printer printer(output());
@@ -592,6 +551,19 @@ TEST_F(PrinterTest, EmitWithSubs) {
             "class Foo {\n"
             "  int x, y, z = 42;\n"
             "};\n");
+}
+
+TEST_F(PrinterTest, EmitComments) {
+  {
+    Printer printer(output());
+    printer.Emit(R"cc(
+      // Yes.
+      //~ No.
+    )cc");
+    printer.Emit("//~ Not a raw string.");
+  }
+
+  EXPECT_EQ(written(), "// Yes.\n//~ Not a raw string.");
 }
 
 TEST_F(PrinterTest, EmitWithVars) {
@@ -615,6 +587,55 @@ TEST_F(PrinterTest, EmitWithVars) {
             "class Foo {\n"
             "  int x, y, z = 42;\n"
             "};\n");
+}
+
+TEST_F(PrinterTest, EmitConsumeAfter) {
+  {
+    Printer printer(output());
+    printer.Emit(
+        {
+            {"class", "Foo"},
+            Printer::Sub{"var", "int x;"}.WithSuffix(";"),
+        },
+        R"cc(
+          class $class$ {
+            $var$;
+          };
+        )cc");
+  }
+
+  EXPECT_EQ(written(),
+            "class Foo {\n"
+            "  int x;\n"
+            "};\n");
+}
+
+TEST_F(PrinterTest, EmitConditionalFunctionCall) {
+  {
+    Printer printer(output());
+    printer.Emit(
+        {
+            Printer::Sub{"weak_cast", ""}.ConditionalFunctionCall(),
+            Printer::Sub{"strong_cast", "static_cast<void*>"}
+                .ConditionalFunctionCall(),
+        },
+        R"cc(
+          $weak_cast$(weak);
+          $weak_cast$(weak + (1234 * 89) + zomg);
+          $strong_cast$(strong);
+          $weak_cast$($strong_cast$($weak_cast$(1 + 2)));
+          $weak_cast$(boy_this_expression_got_really_long +
+                      what_kind_of_monster_does_this);
+        )cc");
+  }
+
+  EXPECT_EQ(written(),
+            "weak;\n"
+            "weak + (1234 * 89) + zomg;\n"
+            "static_cast<void*>(strong);\n"
+            "static_cast<void*>(1 + 2);\n"
+            "boy_this_expression_got_really_long +\n"
+            "            what_kind_of_monster_does_this;\n");
 }
 
 TEST_F(PrinterTest, EmitWithSpacedVars) {
@@ -688,6 +709,32 @@ TEST_F(PrinterTest, EmitSameNameAnnotation) {
               ElementsAre(Annotation(6, 9, "file.proto", ElementsAre(33))));
 }
 
+TEST_F(PrinterTest, EmitSameNameAnnotationWithSemantic) {
+  FakeAnnotationCollector collector;
+  {
+    Printer printer(output(), '$', &collector);
+    FakeDescriptor descriptor{{"file.proto"}, {33}};
+    auto v = printer.WithVars({{"class", "Foo"}});
+    auto a = printer.WithAnnotations(
+        {{"class", {&descriptor, AnnotationCollector::kSet}}});
+
+    printer.Emit({{"f1", "x"}, {"f2", "y"}, {"f3", "z"}}, R"cc(
+      class $class$ {
+        int $f1$, $f2$, $f3$;
+      };
+    )cc");
+  }
+
+  EXPECT_EQ(written(),
+            "class Foo {\n"
+            "  int x, y, z;\n"
+            "};\n");
+
+  EXPECT_THAT(collector.Get(),
+              ElementsAre(Annotation(6, 9, "file.proto", ElementsAre(33),
+                                     AnnotationCollector::kSet)));
+}
+
 TEST_F(PrinterTest, EmitSameNameAnnotationFileNameOnly) {
   FakeAnnotationCollector collector;
   {
@@ -715,7 +762,9 @@ TEST_F(PrinterTest, EmitThreeArgWithVars) {
   FakeAnnotationCollector collector;
   {
     Printer printer(output(), '$', &collector);
-    auto v = printer.WithVars({{"class", "Foo", "file.proto"}});
+    auto v = printer.WithVars({
+        Printer::Sub("class", "Foo").AnnotatedAs("file.proto"),
+    });
 
     printer.Emit({{"f1", "x"}, {"f2", "y"}, {"f3", "z"}}, R"cc(
       class $class$ {
@@ -806,6 +855,43 @@ TEST_F(PrinterTest, EmitCallbacks) {
             "};\n");
 }
 
+TEST_F(PrinterTest, PreserveNewlinesThroughEmits) {
+  {
+    Printer printer(output());
+    const std::vector<std::string> insertion_lines = {"// line 1", "// line 2"};
+    printer.Emit(
+        {
+            {"insert_lines",
+             [&] {
+               for (const auto& line : insertion_lines) {
+                 printer.Emit({{"line", line}}, R"cc(
+                   $line$
+                 )cc");
+               }
+             }},
+        },
+        R"cc(
+          // one
+          // two
+
+          $insert_lines$;
+
+          // three
+          // four
+        )cc");
+  }
+  EXPECT_EQ(written(),
+            "// one\n"
+            "// two\n"
+            "\n"
+            "// line 1\n"
+            "// line 2\n"
+            "\n"
+            "// three\n"
+            "// four\n");
+}
+
+}  // namespace
 }  // namespace io
 }  // namespace protobuf
 }  // namespace google

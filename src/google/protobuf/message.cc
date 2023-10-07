@@ -1,32 +1,9 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 // Author: kenton@google.com (Kenton Varda)
 //  Based on original Protocol Buffers design by
@@ -37,11 +14,11 @@
 #include <iostream>
 #include <stack>
 
-#include "google/protobuf/stubs/logging.h"
-#include "google/protobuf/stubs/common.h"
 #include "absl/base/casts.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/log/absl_check.h"
+#include "absl/log/absl_log.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
@@ -69,7 +46,7 @@ namespace google {
 namespace protobuf {
 namespace internal {
 
-// TODO(gerbens) make this factorized better. This should not have to hop
+// TODO make this factorized better. This should not have to hop
 // to reflection. Currently uses GeneratedMessageReflection and thus is
 // defined in generated_message_reflection.cc
 void RegisterFileLevelMetadata(const DescriptorTable* descriptor_table);
@@ -102,39 +79,24 @@ void Message::CopyFrom(const Message& from) {
 
   auto* class_to = GetClassData();
   auto* class_from = from.GetClassData();
-  auto* copy_to_from = class_to ? class_to->copy_to_from : nullptr;
 
-  if (class_to == nullptr || class_to != class_from) {
+  if (class_from != nullptr && class_from == class_to) {
+    // Fail if "from" is a descendant of "to" as such copy is not allowed.
+    ABSL_DCHECK(!internal::IsDescendant(*this, from))
+        << "Source of CopyFrom cannot be a descendant of the target.";
+    Clear();
+    class_to->merge_to_from(*this, from);
+  } else {
     const Descriptor* descriptor = GetDescriptor();
-    GOOGLE_CHECK_EQ(from.GetDescriptor(), descriptor)
+    ABSL_CHECK_EQ(from.GetDescriptor(), descriptor)
         << ": Tried to copy from a message with a different type. "
            "to: "
         << descriptor->full_name()
         << ", "
            "from: "
         << from.GetDescriptor()->full_name();
-    copy_to_from = [](Message& to, const Message& from) {
-      ReflectionOps::Copy(from, &to);
-    };
+    ReflectionOps::Copy(from, this);
   }
-  copy_to_from(*this, from);
-}
-
-void Message::CopyWithSourceCheck(Message& to, const Message& from) {
-#ifndef NDEBUG
-  FailIfCopyFromDescendant(to, from);
-#endif
-  to.Clear();
-  to.GetClassData()->merge_to_from(to, from);
-}
-
-void Message::FailIfCopyFromDescendant(Message& to, const Message& from) {
-  auto* arena = to.GetArenaForAllocation();
-  bool same_message_owned_arena = to.GetOwningArena() == nullptr &&
-                                  arena != nullptr &&
-                                  arena == from.GetOwningArena();
-  GOOGLE_CHECK(!same_message_owned_arena && !internal::IsDescendant(to, from))
-      << "Source of CopyFrom cannot be a descendant of the target.";
 }
 
 std::string Message::GetTypeName() const {
@@ -158,9 +120,9 @@ std::string Message::InitializationErrorString() const {
 }
 
 void Message::CheckInitialized() const {
-  GOOGLE_CHECK(IsInitialized()) << "Message of type \"" << GetDescriptor()->full_name()
-                         << "\" is missing required fields: "
-                         << InitializationErrorString();
+  ABSL_CHECK(IsInitialized())
+      << "Message of type \"" << GetDescriptor()->full_name()
+      << "\" is missing required fields: " << InitializationErrorString();
 }
 
 void Message::DiscardUnknownFields() {
@@ -187,14 +149,15 @@ uint8_t* Message::_InternalSerialize(uint8_t* target,
 
 size_t Message::ByteSizeLong() const {
   size_t size = WireFormat::ByteSize(*this);
-  SetCachedSize(internal::ToCachedSize(size));
-  return size;
-}
 
-void Message::SetCachedSize(int /* size */) const {
-  GOOGLE_LOG(FATAL) << "Message class \"" << GetDescriptor()->full_name()
-             << "\" implements neither SetCachedSize() nor ByteSize().  "
-                "Must implement one or the other.";
+  auto* cached_size = AccessCachedSize();
+  ABSL_CHECK(cached_size != nullptr)
+      << "Message class \"" << GetDescriptor()->full_name()
+      << "\" implements neither AccessCachedSize() nor ByteSizeLong().  "
+         "Must implement one or the other.";
+  cached_size->Set(internal::ToCachedSize(size));
+
+  return size;
 }
 
 size_t Message::ComputeUnknownFieldsSize(
@@ -219,15 +182,11 @@ size_t Message::SpaceUsedLong() const {
   return GetReflection()->SpaceUsedLong(*this);
 }
 
-uint64_t Message::GetInvariantPerBuild(uint64_t salt) {
-  return salt;
-}
-
 namespace internal {
 void* CreateSplitMessageGeneric(Arena* arena, const void* default_split,
                                 size_t size, const void* message,
                                 const void* default_message) {
-  GOOGLE_DCHECK_NE(message, default_message);
+  ABSL_DCHECK_NE(message, default_message);
   void* split =
       (arena == nullptr) ? ::operator new(size) : arena->AllocateAligned(size);
   memcpy(split, default_split, size);
@@ -316,13 +275,13 @@ GeneratedMessageFactory* GeneratedMessageFactory::singleton() {
 void GeneratedMessageFactory::RegisterFile(
     const google::protobuf::internal::DescriptorTable* table) {
   if (!files_.insert(table).second) {
-    GOOGLE_LOG(FATAL) << "File is already registered: " << table->filename;
+    ABSL_LOG(FATAL) << "File is already registered: " << table->filename;
   }
 }
 
 void GeneratedMessageFactory::RegisterType(const Descriptor* descriptor,
                                            const Message* prototype) {
-  GOOGLE_DCHECK_EQ(descriptor->file()->pool(), DescriptorPool::generated_pool())
+  ABSL_DCHECK_EQ(descriptor->file()->pool(), DescriptorPool::generated_pool())
       << "Tried to register a non-generated type with the generated "
          "type registry.";
 
@@ -331,7 +290,8 @@ void GeneratedMessageFactory::RegisterType(const Descriptor* descriptor,
   // the mutex.
   mutex_.AssertHeld();
   if (!type_map_.try_emplace(descriptor, prototype).second) {
-    GOOGLE_LOG(DFATAL) << "Type is already registered: " << descriptor->full_name();
+    ABSL_DLOG(FATAL) << "Type is already registered: "
+                     << descriptor->full_name();
   }
 }
 
@@ -351,9 +311,9 @@ const Message* GeneratedMessageFactory::GetPrototype(const Descriptor* type) {
   const internal::DescriptorTable* registration_data =
       FindInFileMap(type->file()->name());
   if (registration_data == nullptr) {
-    GOOGLE_LOG(DFATAL) << "File appears to be in generated pool but wasn't "
-                   "registered: "
-                << type->file()->name();
+    ABSL_DLOG(FATAL) << "File appears to be in generated pool but wasn't "
+                        "registered: "
+                     << type->file()->name();
     return nullptr;
   }
 
@@ -369,8 +329,8 @@ const Message* GeneratedMessageFactory::GetPrototype(const Descriptor* type) {
   }
 
   if (result == nullptr) {
-    GOOGLE_LOG(DFATAL) << "Type appears to be in generated pool but wasn't "
-                << "registered: " << type->full_name();
+    ABSL_DLOG(FATAL) << "Type appears to be in generated pool but wasn't "
+                     << "registered: " << type->full_name();
   }
 
   return result;
@@ -403,7 +363,7 @@ T* GetSingleton() {
 
 const internal::RepeatedFieldAccessor* Reflection::RepeatedFieldAccessor(
     const FieldDescriptor* field) const {
-  GOOGLE_CHECK(field->is_repeated());
+  ABSL_CHECK(field->is_repeated());
   switch (field->cpp_type()) {
 #define HANDLE_PRIMITIVE_TYPE(TYPE, type) \
   case FieldDescriptor::CPPTYPE_##TYPE:   \
@@ -431,7 +391,7 @@ const internal::RepeatedFieldAccessor* Reflection::RepeatedFieldAccessor(
         return GetSingleton<internal::RepeatedPtrFieldMessageAccessor>();
       }
   }
-  GOOGLE_LOG(FATAL) << "Should not reach here.";
+  ABSL_LOG(FATAL) << "Should not reach here.";
   return nullptr;
 }
 
@@ -454,15 +414,15 @@ template <>
 PROTOBUF_NOINLINE
 #endif
     Arena*
-    GenericTypeHandler<Message>::GetOwningArena(Message* value) {
-  return value->GetOwningArena();
+    GenericTypeHandler<Message>::GetArena(Message* value) {
+  return value->GetArena();
 }
 
 template void InternalMetadata::DoClear<UnknownFieldSet>();
 template void InternalMetadata::DoMergeFrom<UnknownFieldSet>(
     const UnknownFieldSet& other);
 template void InternalMetadata::DoSwap<UnknownFieldSet>(UnknownFieldSet* other);
-template Arena* InternalMetadata::DeleteOutOfLineHelper<UnknownFieldSet>();
+template void InternalMetadata::DeleteOutOfLineHelper<UnknownFieldSet>();
 template UnknownFieldSet*
 InternalMetadata::mutable_unknown_fields_slow<UnknownFieldSet>();
 

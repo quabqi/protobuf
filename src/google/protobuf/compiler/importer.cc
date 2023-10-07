@@ -1,32 +1,9 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 // Author: kenton@google.com (Kenton Varda)
 //  Based on original Protocol Buffers design by
@@ -49,6 +26,7 @@
 #include <vector>
 
 #include "absl/strings/match.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/str_split.h"
@@ -74,7 +52,7 @@ using google::protobuf::io::win32::open;
 #endif
 
 // Returns true if the text looks like a Windows-style absolute path, starting
-// with a drive letter.  Example:  "C:\foo".  TODO(kenton):  Share this with
+// with a drive letter.  Example:  "C:\foo".  TODO:  Share this with
 // copy in command_line_interface.cc?
 static bool IsWindowsAbsolutePath(absl::string_view text) {
 #if defined(_WIN32) || defined(__CYGWIN__)
@@ -104,9 +82,10 @@ class SourceTreeDescriptorDatabase::SingleFileErrorCollector
   bool had_errors() { return had_errors_; }
 
   // implements ErrorCollector ---------------------------------------
-  void AddError(int line, int column, const std::string& message) override {
+  void RecordError(int line, int column, absl::string_view message) override {
     if (multi_file_error_collector_ != nullptr) {
-      multi_file_error_collector_->AddError(filename_, line, column, message);
+      multi_file_error_collector_->RecordError(filename_, line, column,
+                                               message);
     }
     had_errors_ = true;
   }
@@ -146,8 +125,8 @@ bool SourceTreeDescriptorDatabase::FindFileByName(const std::string& filename,
       return true;
     }
     if (error_collector_ != nullptr) {
-      error_collector_->AddError(filename, -1, 0,
-                                 source_tree_->GetLastErrorMessage());
+      error_collector_->RecordError(filename, -1, 0,
+                                    source_tree_->GetLastErrorMessage());
     }
     return false;
   }
@@ -189,10 +168,10 @@ SourceTreeDescriptorDatabase::ValidationErrorCollector::
 SourceTreeDescriptorDatabase::ValidationErrorCollector::
     ~ValidationErrorCollector() {}
 
-void SourceTreeDescriptorDatabase::ValidationErrorCollector::AddError(
-    const std::string& filename, const std::string& element_name,
+void SourceTreeDescriptorDatabase::ValidationErrorCollector::RecordError(
+    absl::string_view filename, absl::string_view element_name,
     const Message* descriptor, ErrorLocation location,
-    const std::string& message) {
+    absl::string_view message) {
   if (owner_->error_collector_ == nullptr) return;
 
   int line, column;
@@ -202,13 +181,13 @@ void SourceTreeDescriptorDatabase::ValidationErrorCollector::AddError(
   } else {
     owner_->source_locations_.Find(descriptor, location, &line, &column);
   }
-  owner_->error_collector_->AddError(filename, line, column, message);
+  owner_->error_collector_->RecordError(filename, line, column, message);
 }
 
-void SourceTreeDescriptorDatabase::ValidationErrorCollector::AddWarning(
-    const std::string& filename, const std::string& element_name,
+void SourceTreeDescriptorDatabase::ValidationErrorCollector::RecordWarning(
+    absl::string_view filename, absl::string_view element_name,
     const Message* descriptor, ErrorLocation location,
-    const std::string& message) {
+    absl::string_view message) {
   if (owner_->error_collector_ == nullptr) return;
 
   int line, column;
@@ -218,7 +197,7 @@ void SourceTreeDescriptorDatabase::ValidationErrorCollector::AddWarning(
   } else {
     owner_->source_locations_.Find(descriptor, location, &line, &column);
   }
-  owner_->error_collector_->AddWarning(filename, line, column, message);
+  owner_->error_collector_->RecordWarning(filename, line, column, message);
 }
 
 // ===================================================================
@@ -263,13 +242,13 @@ DiskSourceTree::~DiskSourceTree() {}
 // - Any consecutive '/'s are collapsed into a single slash.
 // Note that the resulting string may be empty.
 //
-// TODO(kenton):  It would be nice to handle "..", e.g. so that we can figure
+// TODO:  It would be nice to handle "..", e.g. so that we can figure
 //   out that "foo/bar.proto" is inside "baz/../foo".  However, if baz is a
 //   symlink or doesn't exist, then things get complicated, and we can't
 //   actually determine this without investigating the filesystem, probably
 //   in non-portable ways.  So, we punt.
 //
-// TODO(kenton):  It would be nice to use realpath() here except that it
+// TODO:  It would be nice to use realpath() here except that it
 //   resolves symbolic links.  This could cause problems if people place
 //   symbolic links in their source tree.  For example, if you executed:
 //     protoc --proto_path=foo foo/bar/baz.proto
@@ -284,7 +263,8 @@ static std::string CanonicalizePath(absl::string_view path) {
   std::string path_str;
   if (absl::StartsWith(path, "\\\\")) {
     // Avoid converting two leading backslashes.
-    path_str = "\\\\" + absl::StrReplaceAll(path.substr(2), {{"\\", "/"}});
+    path_str = absl::StrCat("\\\\",
+                            absl::StrReplaceAll(path.substr(2), {{"\\", "/"}}));
   } else {
     path_str = absl::StrReplaceAll(path, {{"\\", "/"}});
   }
@@ -475,7 +455,7 @@ io::ZeroCopyInputStream* DiskSourceTree::OpenVirtualFile(
       if (errno == EACCES) {
         // The file exists but is not readable.
         last_error_message_ =
-            "Read access is denied for file: " + temp_disk_file;
+            absl::StrCat("Read access is denied for file: ", temp_disk_file);
         return nullptr;
       }
     }

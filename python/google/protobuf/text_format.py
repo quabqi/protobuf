@@ -1,32 +1,9 @@
 # Protocol Buffers - Google's data interchange format
 # Copyright 2008 Google Inc.  All rights reserved.
-# https://developers.google.com/protocol-buffers/
 #
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions are
-# met:
-#
-#     * Redistributions of source code must retain the above copyright
-# notice, this list of conditions and the following disclaimer.
-#     * Redistributions in binary form must reproduce the above
-# copyright notice, this list of conditions and the following disclaimer
-# in the documentation and/or other materials provided with the
-# distribution.
-#     * Neither the name of Google Inc. nor the names of its
-# contributors may be used to endorse or promote products derived from
-# this software without specific prior written permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+# Use of this source code is governed by a BSD-style
+# license that can be found in the LICENSE file or at
+# https://developers.google.com/open-source/licenses/bsd
 
 """Contains routines for printing protocol messages in text format.
 
@@ -42,7 +19,7 @@ Simple usage example::
 
 __author__ = 'kenton@google.com (Kenton Varda)'
 
-# TODO(b/129989314) Import thread contention leads to test failures.
+# TODO Import thread contention leads to test failures.
 import encodings.raw_unicode_escape  # pylint: disable=unused-import
 import encodings.unicode_escape  # pylint: disable=unused-import
 import io
@@ -330,13 +307,12 @@ def _BuildMessageFromTypeName(type_name, descriptor_pool):
   if descriptor_pool is None:
     from google.protobuf import descriptor_pool as pool_mod
     descriptor_pool = pool_mod.Default()
-  from google.protobuf import symbol_database
-  database = symbol_database.Default()
+  from google.protobuf import message_factory
   try:
     message_descriptor = descriptor_pool.FindMessageTypeByName(type_name)
   except KeyError:
     return None
-  message_type = database.GetPrototype(message_descriptor)
+  message_type = message_factory.GetMessageClass(message_descriptor)
   return message_type()
 
 
@@ -465,7 +441,7 @@ class _Printer(object):
           # entire tree.  Unfortunately this would take significant refactoring
           # of this file to work around.
           #
-          # TODO(haberman): refactor and optimize if this becomes an issue.
+          # TODO: refactor and optimize if this becomes an issue.
           entry_submsg = value.GetEntryClass()(key=key, value=value[key])
           self.PrintField(field, entry_submsg)
       elif field.label == descriptor.FieldDescriptor.LABEL_REPEATED:
@@ -859,9 +835,9 @@ class _Parser(object):
       str_lines = (
           line if isinstance(line, str) else line.decode('utf-8')
           for line in lines)
+      tokenizer = Tokenizer(str_lines)
     except UnicodeDecodeError as e:
-      raise self._StringParseError(e)
-    tokenizer = Tokenizer(str_lines)
+      raise ParseError from e
     if message:
       self.root_type = message.DESCRIPTOR.full_name
     while not tokenizer.AtEnd():
@@ -883,7 +859,7 @@ class _Parser(object):
       type_url_prefix, packed_type_name = self._ConsumeAnyTypeUrl(tokenizer)
       tokenizer.Consume(']')
       tokenizer.TryConsume(':')
-      self._DetectSilentMarker(tokenizer,
+      self._DetectSilentMarker(tokenizer, message_descriptor.full_name,
                                type_url_prefix + '/' + packed_type_name)
       if tokenizer.TryConsume('<'):
         expanded_any_end_token = '>'
@@ -982,11 +958,13 @@ class _Parser(object):
 
       if field.cpp_type == descriptor.FieldDescriptor.CPPTYPE_MESSAGE:
         tokenizer.TryConsume(':')
-        self._DetectSilentMarker(tokenizer, field.full_name)
+        self._DetectSilentMarker(tokenizer, message_descriptor.full_name,
+                                 field.full_name)
         merger = self._MergeMessageField
       else:
         tokenizer.Consume(':')
-        self._DetectSilentMarker(tokenizer, field.full_name)
+        self._DetectSilentMarker(tokenizer, message_descriptor.full_name,
+                                 field.full_name)
         merger = self._MergeScalarField
 
       if (field.label == descriptor.FieldDescriptor.LABEL_REPEATED and
@@ -1004,19 +982,19 @@ class _Parser(object):
 
     else:  # Proto field is unknown.
       assert (self.allow_unknown_extension or self.allow_unknown_field)
-      self._SkipFieldContents(tokenizer, name)
+      self._SkipFieldContents(tokenizer, name, message_descriptor.full_name)
 
     # For historical reasons, fields may optionally be separated by commas or
     # semicolons.
     if not tokenizer.TryConsume(','):
       tokenizer.TryConsume(';')
 
-  def _LogSilentMarker(self, field_name):
+  def _LogSilentMarker(self, immediate_message_type, field_name):
     pass
 
-  def _DetectSilentMarker(self, tokenizer, field_name):
+  def _DetectSilentMarker(self, tokenizer, immediate_message_type, field_name):
     if tokenizer.contains_silent_marker_before_current_token:
-      self._LogSilentMarker(field_name)
+      self._LogSilentMarker(immediate_message_type, field_name)
 
   def _ConsumeAnyTypeUrl(self, tokenizer):
     """Consumes a google.protobuf.Any type URL and returns the type name."""
@@ -1069,7 +1047,7 @@ class _Parser(object):
         sub_message = message.Extensions[field]
       else:
         # Also apply _allow_multiple_scalars to message field.
-        # TODO(jieluo): Change to _allow_singular_overwrites.
+        # TODO: Change to _allow_singular_overwrites.
         if (not self._allow_multiple_scalars and
             message.HasField(field.name)):
           raise tokenizer.ParseErrorPreviousToken(
@@ -1166,12 +1144,14 @@ class _Parser(object):
         else:
           setattr(message, field.name, value)
 
-  def _SkipFieldContents(self, tokenizer, field_name):
+  def _SkipFieldContents(self, tokenizer, field_name, immediate_message_type):
     """Skips over contents (value or message) of a field.
 
     Args:
       tokenizer: A tokenizer to parse the field name and values.
       field_name: The field name currently being parsed.
+      immediate_message_type: The type of the message immediately containing
+        the silent marker.
     """
     # Try to guess the type of this field.
     # If this field is not a message, there should be a ":" between the
@@ -1181,20 +1161,22 @@ class _Parser(object):
     # to be a message or the input is ill-formed.
     if tokenizer.TryConsume(
         ':') and not tokenizer.LookingAt('{') and not tokenizer.LookingAt('<'):
-      self._DetectSilentMarker(tokenizer, field_name)
+      self._DetectSilentMarker(tokenizer, immediate_message_type, field_name)
       if tokenizer.LookingAt('['):
         self._SkipRepeatedFieldValue(tokenizer)
       else:
         self._SkipFieldValue(tokenizer)
     else:
-      self._DetectSilentMarker(tokenizer, field_name)
-      self._SkipFieldMessage(tokenizer)
+      self._DetectSilentMarker(tokenizer, immediate_message_type, field_name)
+      self._SkipFieldMessage(tokenizer, immediate_message_type)
 
-  def _SkipField(self, tokenizer):
+  def _SkipField(self, tokenizer, immediate_message_type):
     """Skips over a complete field (name and value/message).
 
     Args:
       tokenizer: A tokenizer to parse the field name and values.
+      immediate_message_type: The type of the message immediately containing
+        the silent marker.
     """
     field_name = ''
     if tokenizer.TryConsume('['):
@@ -1214,18 +1196,20 @@ class _Parser(object):
     else:
       field_name += tokenizer.ConsumeIdentifierOrNumber()
 
-    self._SkipFieldContents(tokenizer, field_name)
+    self._SkipFieldContents(tokenizer, field_name, immediate_message_type)
 
     # For historical reasons, fields may optionally be separated by commas or
     # semicolons.
     if not tokenizer.TryConsume(','):
       tokenizer.TryConsume(';')
 
-  def _SkipFieldMessage(self, tokenizer):
+  def _SkipFieldMessage(self, tokenizer, immediate_message_type):
     """Skips over a field message.
 
     Args:
       tokenizer: A tokenizer to parse the field name and values.
+      immediate_message_type: The type of the message immediately containing
+        the silent marker
     """
     if tokenizer.TryConsume('<'):
       delimiter = '>'
@@ -1234,7 +1218,7 @@ class _Parser(object):
       delimiter = '}'
 
     while not tokenizer.LookingAt('>') and not tokenizer.LookingAt('}'):
-      self._SkipField(tokenizer)
+      self._SkipField(tokenizer, immediate_message_type)
 
     tokenizer.Consume(delimiter)
 
@@ -1247,15 +1231,10 @@ class _Parser(object):
     Raises:
       ParseError: In case an invalid field value is found.
     """
-    # String/bytes tokens can come in multiple adjacent string literals.
-    # If we can consume one, consume as many as we can.
-    if tokenizer.TryConsumeByteString():
-      while tokenizer.TryConsumeByteString():
-        pass
-      return
-
-    if (not tokenizer.TryConsumeIdentifier() and
-        not _TryConsumeInt64(tokenizer) and not _TryConsumeUint64(tokenizer) and
+    if (not tokenizer.TryConsumeByteString()and
+        not tokenizer.TryConsumeIdentifier() and
+        not _TryConsumeInt64(tokenizer) and
+        not _TryConsumeUint64(tokenizer) and
         not tokenizer.TryConsumeFloat()):
       raise ParseError('Invalid field value: ' + tokenizer.token)
 
@@ -1618,7 +1597,7 @@ class Tokenizer(object):
       self.token = self._current_line[self._column]
 
 # Aliased so it can still be accessed by current visibility violators.
-# TODO(dbarnett): Migrate violators to textformat_tokenizer.
+# TODO: Migrate violators to textformat_tokenizer.
 _Tokenizer = Tokenizer  # pylint: disable=invalid-name
 
 

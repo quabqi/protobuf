@@ -1,32 +1,9 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 // Author: kenton@google.com (Kenton Varda)
 //  Based on original Protocol Buffers design by
@@ -37,9 +14,10 @@
 #include <string>
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "google/protobuf/compiler/java/helpers.h"
 #include "google/protobuf/compiler/java/name_resolver.h"
-#include "google/protobuf/compiler/java/names.h"
 #include "google/protobuf/compiler/java/options.h"
 #include "google/protobuf/descriptor.pb.h"
 
@@ -74,7 +52,7 @@ bool IsReservedName(absl::string_view name) {
   return kReservedNames.contains(name);
 }
 
-bool IsForbidden(const std::string& field_name) {
+bool IsForbidden(absl::string_view field_name) {
   // Names that should be avoided (in UpperCamelCase format).
   // Using them will cause the compiler to generate accessors whose names
   // collide with methods defined in base classes.
@@ -113,7 +91,7 @@ std::string FieldName(const FieldDescriptor* field) {
   if (IsForbidden(field_name)) {
     // Append a trailing "#" to indicate that the name should be decorated to
     // avoid collision with other names.
-    field_name += "#";
+    absl::StrAppend(&field_name, "#");
   }
   return field_name;
 }
@@ -180,10 +158,11 @@ std::string UnderscoresToCamelCase(const MethodDescriptor* method) {
 std::string UnderscoresToCamelCaseCheckReserved(const FieldDescriptor* field) {
   std::string name = UnderscoresToCamelCase(field);
   if (IsReservedName(name)) {
-    return name + "_";
+    absl::StrAppend(&name, "_");
   }
   return name;
 }
+
 
 }  // namespace java
 }  // namespace compiler

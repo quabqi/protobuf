@@ -1,32 +1,9 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 // Author: robinson@google.com (Will Robinson)
 //
@@ -36,9 +13,12 @@
 #define GOOGLE_PROTOBUF_COMPILER_PYTHON_GENERATOR_H__
 
 #include <string>
+#include <vector>
 
+#include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "google/protobuf/compiler/code_generator.h"
+#include "google/protobuf/descriptor.pb.h"
 
 // Must be included last.
 #include "google/protobuf/port_def.inc"
@@ -90,11 +70,11 @@ class PROTOC_EXPORT Generator : public CodeGenerator {
   }
 
  private:
-  GeneratorOptions ParseParameter(const std::string& parameter,
+  GeneratorOptions ParseParameter(absl::string_view parameter,
                                   std::string* error) const;
   void PrintImports() const;
   void PrintFileDescriptor() const;
-  void PrintAllNestedEnumsInFile() const;
+  void PrintAllEnumsInFile() const;
   void PrintNestedEnums(const Descriptor& descriptor) const;
   void PrintEnum(const EnumDescriptor& enum_descriptor) const;
 
@@ -102,8 +82,8 @@ class PROTOC_EXPORT Generator : public CodeGenerator {
                             bool is_extension) const;
   void PrintFieldDescriptorsInDescriptor(
       const Descriptor& message_descriptor, bool is_extension,
-      const std::string& list_variable_name, int (Descriptor::*CountFn)() const,
-      const FieldDescriptor* (Descriptor::*GetterFn)(int)const) const;
+      absl::string_view list_variable_name, int (Descriptor::*CountFn)() const,
+      const FieldDescriptor* (Descriptor::*GetterFn)(int) const) const;
   void PrintFieldsInDescriptor(const Descriptor& message_descriptor) const;
   void PrintExtensionsInDescriptor(const Descriptor& message_descriptor) const;
   void PrintMessageDescriptors() const;
@@ -112,11 +92,11 @@ class PROTOC_EXPORT Generator : public CodeGenerator {
 
   void PrintMessages() const;
   void PrintMessage(const Descriptor& message_descriptor,
-                    const std::string& prefix,
+                    absl::string_view prefix,
                     std::vector<std::string>* to_register,
                     bool is_nested) const;
   void PrintNestedMessages(const Descriptor& containing_descriptor,
-                           const std::string& prefix,
+                           absl::string_view prefix,
                            std::vector<std::string>* to_register) const;
 
   void FixForeignFieldsInDescriptors() const;
@@ -125,23 +105,18 @@ class PROTOC_EXPORT Generator : public CodeGenerator {
       const Descriptor* containing_descriptor) const;
   void FixForeignFieldsInField(const Descriptor* containing_type,
                                const FieldDescriptor& field,
-                               const std::string& python_dict_name) const;
+                               absl::string_view python_dict_name) const;
   void AddMessageToFileDescriptor(const Descriptor& descriptor) const;
   void AddEnumToFileDescriptor(const EnumDescriptor& descriptor) const;
   void AddExtensionToFileDescriptor(const FieldDescriptor& descriptor) const;
   void AddServiceToFileDescriptor(const ServiceDescriptor& descriptor) const;
   std::string FieldReferencingExpression(
       const Descriptor* containing_type, const FieldDescriptor& field,
-      const std::string& python_dict_name) const;
+      absl::string_view python_dict_name) const;
   template <typename DescriptorT>
   void FixContainingTypeInDescriptor(
       const DescriptorT& descriptor,
       const Descriptor* containing_descriptor) const;
-
-  void FixForeignFieldsInExtensions() const;
-  void FixForeignFieldsInExtension(
-      const FieldDescriptor& extension_field) const;
-  void FixForeignFieldsInNestedExtensions(const Descriptor& descriptor) const;
 
   void PrintTopBoilerplate() const;
   void PrintServices() const;
@@ -153,7 +128,7 @@ class PROTOC_EXPORT Generator : public CodeGenerator {
       const ServiceDescriptor& descriptor) const;
 
   void PrintEnumValueDescriptor(const EnumValueDescriptor& descriptor) const;
-  std::string OptionsValue(const std::string& serialized_options) const;
+  std::string OptionsValue(absl::string_view serialized_options) const;
   bool GeneratingDescriptorProto() const;
 
   template <typename DescriptorT>
@@ -161,13 +136,10 @@ class PROTOC_EXPORT Generator : public CodeGenerator {
   std::string ModuleLevelMessageName(const Descriptor& descriptor) const;
   std::string ModuleLevelServiceDescriptorName(
       const ServiceDescriptor& descriptor) const;
-  std::string PublicPackage() const;
-  std::string InternalPackage() const;
 
-  template <typename DescriptorT, typename DescriptorProtoT>
-  void PrintSerializedPbInterval(const DescriptorT& descriptor,
-                                 DescriptorProtoT& proto,
-                                 const std::string& name) const;
+  template <typename DescriptorProtoT>
+  void PrintSerializedPbInterval(const DescriptorProtoT& descriptor_proto,
+                                 absl::string_view name) const;
 
   void FixAllDescriptorOptions() const;
   void FixOptionsForField(const FieldDescriptor& field) const;
@@ -176,10 +148,11 @@ class PROTOC_EXPORT Generator : public CodeGenerator {
   void FixOptionsForService(const ServiceDescriptor& descriptor) const;
   void FixOptionsForMessage(const Descriptor& descriptor) const;
 
-  void SetSerializedPbInterval() const;
-  void SetMessagePbInterval(const Descriptor& descriptor) const;
+  void SetSerializedPbInterval(const FileDescriptorProto& file) const;
+  void SetMessagePbInterval(const DescriptorProto& message_proto,
+                            const Descriptor& descriptor) const;
 
-  void CopyPublicDependenciesAliases(const std::string& copy_from,
+  void CopyPublicDependenciesAliases(absl::string_view copy_from,
                                      const FileDescriptor* file) const;
 
   // Very coarse-grained lock to ensure that Generate() is reentrant.

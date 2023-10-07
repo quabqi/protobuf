@@ -1,40 +1,19 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 #include "text_format_conformance_suite.h"
 
 #include "google/protobuf/any.pb.h"
-#include "google/protobuf/text_format.h"
+#include "absl/log/absl_log.h"
+#include "absl/strings/str_cat.h"
 #include "conformance_test.h"
 #include "google/protobuf/test_messages_proto2.pb.h"
 #include "google/protobuf/test_messages_proto3.pb.h"
+#include "google/protobuf/text_format.h"
 
 namespace proto2_messages = protobuf_test_messages::proto2;
 
@@ -68,9 +47,9 @@ bool TextFormatConformanceTestSuite::ParseTextFormatResponse(
     parser.AllowFieldNumber(true);
   }
   if (!parser.ParseFromString(response.text_payload(), test_message)) {
-    GOOGLE_LOG(ERROR) << "INTERNAL ERROR: internal text->protobuf transcode "
-               << "yielded unparseable proto. Text payload: "
-               << response.text_payload();
+    ABSL_LOG(ERROR) << "INTERNAL ERROR: internal text->protobuf transcode "
+                    << "yielded unparseable proto. Text payload: "
+                    << response.text_payload();
     return false;
   }
 
@@ -125,8 +104,8 @@ bool TextFormatConformanceTestSuite::ParseResponse(
     }
 
     default:
-      GOOGLE_LOG(FATAL) << test_name
-                 << ": unknown payload type: " << response.result_case();
+      ABSL_LOG(FATAL) << test_name
+                      << ": unknown payload type: " << response.result_case();
   }
 
   return true;
@@ -219,15 +198,15 @@ void TextFormatConformanceTestSuite::RunValidUnknownTextFormatTest(
   TestAllTypesProto3 prototype;
   ConformanceRequestSetting setting1(
       RECOMMENDED, conformance::PROTOBUF, conformance::TEXT_FORMAT,
-      conformance::TEXT_FORMAT_TEST, prototype, test_name + "_Drop",
-      serialized_input);
+      conformance::TEXT_FORMAT_TEST, prototype,
+      absl::StrCat(test_name, "_Drop"), serialized_input);
   setting1.SetPrototypeMessageForCompare(message);
   RunValidBinaryInputTest(setting1, "");
 
   ConformanceRequestSetting setting2(
       RECOMMENDED, conformance::PROTOBUF, conformance::TEXT_FORMAT,
-      conformance::TEXT_FORMAT_TEST, prototype, test_name + "_Print",
-      serialized_input);
+      conformance::TEXT_FORMAT_TEST, prototype,
+      absl::StrCat(test_name, "_Print"), serialized_input);
   setting2.SetPrototypeMessageForCompare(message);
   setting2.SetPrintUnknownFields(true);
   RunValidBinaryInputTest(setting2, serialized_input);
@@ -531,26 +510,27 @@ void TextFormatConformanceTestSuite::RunTextFormatPerformanceTests() {
 void TextFormatConformanceTestSuite::
     TestTextFormatPerformanceMergeMessageWithRepeatedField(
         const string& test_type_name, const string& message_field) {
-  string recursive_message = "recursive_message { " + message_field + " }";
+  string recursive_message =
+      absl::StrCat("recursive_message { ", message_field, " }");
 
   string input;
   for (size_t i = 0; i < kPerformanceRepeatCount; i++) {
-    input.append(recursive_message);
+    absl::StrAppend(&input, recursive_message);
   }
 
   string expected = "recursive_message { ";
   for (size_t i = 0; i < kPerformanceRepeatCount; i++) {
-    expected.append(message_field + " ");
+    absl::StrAppend(&expected, message_field, " ");
   }
-  expected.append("}");
+  absl::StrAppend(&expected, "}");
 
   RunValidTextFormatTestProto2WithExpected(
-      "TestTextFormatPerformanceMergeMessageWithRepeatedField" +
-          test_type_name + "Proto2",
+      absl::StrCat("TestTextFormatPerformanceMergeMessageWithRepeatedField",
+                   test_type_name, "Proto2"),
       RECOMMENDED, input, expected);
   RunValidTextFormatTestWithExpected(
-      "TestTextFormatPerformanceMergeMessageWithRepeatedField" +
-          test_type_name + "Proto3",
+      absl::StrCat("TestTextFormatPerformanceMergeMessageWithRepeatedField",
+                   test_type_name, "Proto3"),
       RECOMMENDED, input, expected);
 }
 

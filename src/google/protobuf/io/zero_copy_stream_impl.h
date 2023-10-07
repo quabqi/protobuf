@@ -1,32 +1,9 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 // Author: kenton@google.com (Kenton Varda)
 //  Based on original Protocol Buffers design by
@@ -62,8 +39,7 @@ namespace io {
 // The latter will introduce an extra layer of buffering, harming performance.
 // Also, it's conceivable that FileInputStream could someday be enhanced
 // to use zero-copy file descriptors on OSs which support them.
-class PROTOBUF_EXPORT FileInputStream PROTOBUF_FUTURE_FINAL
-    : public ZeroCopyInputStream {
+class PROTOBUF_EXPORT FileInputStream final : public ZeroCopyInputStream {
  public:
   // Creates a stream that reads from the given Unix file descriptor.
   // If a block_size is given, it specifies the number of bytes that
@@ -98,7 +74,7 @@ class PROTOBUF_EXPORT FileInputStream PROTOBUF_FUTURE_FINAL
   int64_t ByteCount() const override;
 
  private:
-  class PROTOBUF_EXPORT CopyingFileInputStream PROTOBUF_FUTURE_FINAL
+  class PROTOBUF_EXPORT CopyingFileInputStream final
       : public CopyingInputStream {
    public:
     CopyingFileInputStream(int file_descriptor);
@@ -141,7 +117,7 @@ class PROTOBUF_EXPORT FileInputStream PROTOBUF_FUTURE_FINAL
 // harming performance.  Also, it's conceivable that FileOutputStream could
 // someday be enhanced to use zero-copy file descriptors on OSs which
 // support them.
-class PROTOBUF_EXPORT FileOutputStream PROTOBUF_FUTURE_FINAL
+class PROTOBUF_EXPORT FileOutputStream final
     : public CopyingOutputStreamAdaptor {
  public:
   // Creates a stream that writes to the given Unix file descriptor.
@@ -173,7 +149,7 @@ class PROTOBUF_EXPORT FileOutputStream PROTOBUF_FUTURE_FINAL
   int GetErrno() const { return copying_output_.GetErrno(); }
 
  private:
-  class PROTOBUF_EXPORT CopyingFileOutputStream PROTOBUF_FUTURE_FINAL
+  class PROTOBUF_EXPORT CopyingFileOutputStream final
       : public CopyingOutputStream {
    public:
     CopyingFileOutputStream(int file_descriptor);
@@ -207,8 +183,7 @@ class PROTOBUF_EXPORT FileOutputStream PROTOBUF_FUTURE_FINAL
 //
 // Note that for reading files (or anything represented by a file descriptor),
 // FileInputStream is more efficient.
-class PROTOBUF_EXPORT IstreamInputStream PROTOBUF_FUTURE_FINAL
-    : public ZeroCopyInputStream {
+class PROTOBUF_EXPORT IstreamInputStream final : public ZeroCopyInputStream {
  public:
   // Creates a stream that reads from the given C++ istream.
   // If a block_size is given, it specifies the number of bytes that
@@ -225,7 +200,7 @@ class PROTOBUF_EXPORT IstreamInputStream PROTOBUF_FUTURE_FINAL
   int64_t ByteCount() const override;
 
  private:
-  class PROTOBUF_EXPORT CopyingIstreamInputStream PROTOBUF_FUTURE_FINAL
+  class PROTOBUF_EXPORT CopyingIstreamInputStream final
       : public CopyingInputStream {
    public:
     CopyingIstreamInputStream(std::istream* input);
@@ -253,8 +228,7 @@ class PROTOBUF_EXPORT IstreamInputStream PROTOBUF_FUTURE_FINAL
 //
 // Note that for writing files (or anything represented by a file descriptor),
 // FileOutputStream is more efficient.
-class PROTOBUF_EXPORT OstreamOutputStream PROTOBUF_FUTURE_FINAL
-    : public ZeroCopyOutputStream {
+class PROTOBUF_EXPORT OstreamOutputStream final : public ZeroCopyOutputStream {
  public:
   // Creates a stream that writes to the given C++ ostream.
   // If a block_size is given, it specifies the size of the buffers
@@ -271,7 +245,7 @@ class PROTOBUF_EXPORT OstreamOutputStream PROTOBUF_FUTURE_FINAL
   int64_t ByteCount() const override;
 
  private:
-  class PROTOBUF_EXPORT CopyingOstreamOutputStream PROTOBUF_FUTURE_FINAL
+  class PROTOBUF_EXPORT CopyingOstreamOutputStream final
       : public CopyingOutputStream {
    public:
     CopyingOstreamOutputStream(std::ostream* output);
@@ -301,7 +275,7 @@ class PROTOBUF_EXPORT OstreamOutputStream PROTOBUF_FUTURE_FINAL
 // ConcatenatingInputStream may do odd things.  It is suggested that you do
 // not use ConcatenatingInputStream on streams that might produce read errors
 // other than end-of-stream.
-class PROTOBUF_EXPORT ConcatenatingInputStream PROTOBUF_FUTURE_FINAL
+class PROTOBUF_EXPORT ConcatenatingInputStream final
     : public ZeroCopyInputStream {
  public:
   // All streams passed in as well as the array itself must remain valid

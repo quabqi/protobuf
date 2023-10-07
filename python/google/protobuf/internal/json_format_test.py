@@ -1,32 +1,9 @@
 # Protocol Buffers - Google's data interchange format
 # Copyright 2008 Google Inc.  All rights reserved.
-# https://developers.google.com/protocol-buffers/
 #
-# Redistribution and use in source and binary forms, with or without
-# modification, are permitted provided that the following conditions are
-# met:
-#
-#     * Redistributions of source code must retain the above copyright
-# notice, this list of conditions and the following disclaimer.
-#     * Redistributions in binary form must reproduce the above
-# copyright notice, this list of conditions and the following disclaimer
-# in the documentation and/or other materials provided with the
-# distribution.
-#     * Neither the name of Google Inc. nor the names of its
-# contributors may be used to endorse or promote products derived from
-# this software without specific prior written permission.
-#
-# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-# OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-# SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-# LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-# THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+# Use of this source code is governed by a BSD-style
+# license that can be found in the LICENSE file or at
+# https://developers.google.com/open-source/licenses/bsd
 
 """Test for google.protobuf.json_format."""
 
@@ -608,6 +585,23 @@ class JsonFormatTest(JsonFormatBase):
     json_format.Parse('{"value": null}', message)
     self.assertEqual(message.value.WhichOneof('kind'), 'null_value')
 
+  def testValueMessageErrors(self):
+    message = json_format_proto3_pb2.TestValue()
+    message.value.number_value = math.inf
+    with self.assertRaises(json_format.SerializeToJsonError) as cm:
+      json_format.MessageToJson(message)
+    self.assertEqual(
+        'Failed to serialize value field: Fail to serialize Infinity for '
+        'Value.number_value, which would parse as string_value.',
+        str(cm.exception))
+    message.value.number_value = math.nan
+    with self.assertRaises(json_format.SerializeToJsonError) as cm:
+      json_format.MessageToJson(message)
+    self.assertEqual(
+        'Failed to serialize value field: Fail to serialize NaN for '
+        'Value.number_value, which would parse as string_value.',
+        str(cm.exception))
+
   def testListValueMessage(self):
     message = json_format_proto3_pb2.TestListValue()
     message.value.values.add().number_value = 11.1
@@ -1043,7 +1037,7 @@ class JsonFormatTest(JsonFormatBase):
   def testInvalidTimestamp(self):
     message = json_format_proto3_pb2.TestTimestamp()
     text = '{"value": "10000-01-01T00:00:00.00Z"}'
-    self.assertRaisesRegexp(
+    self.assertRaisesRegex(
         json_format.ParseError, 'Failed to parse value field: '
         'time data \'10000-01-01T00:00:00\' does not match'
         ' format \'%Y-%m-%dT%H:%M:%S\' at TestTimestamp.value.',
@@ -1080,7 +1074,7 @@ class JsonFormatTest(JsonFormatBase):
   def testInvalidOneof(self):
     message = json_format_proto3_pb2.TestOneof()
     text = '{"oneofInt32Value": 1, "oneofStringValue": "2"}'
-    self.assertRaisesRegexp(
+    self.assertRaisesRegex(
         json_format.ParseError, 'Message type "proto3.TestOneof"'
         ' should not have multiple "oneof_value" oneof fields at "TestOneof".',
         json_format.Parse, text, message)

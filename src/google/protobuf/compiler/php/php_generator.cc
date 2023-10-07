@@ -1,48 +1,31 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 #include "google/protobuf/compiler/php/php_generator.h"
 
+#include <algorithm>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "google/protobuf/compiler/code_generator.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
+#include "absl/log/absl_log.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/escaping.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/str_split.h"
 #include "absl/strings/string_view.h"
+#include "google/protobuf/compiler/retention.h"
 #include "google/protobuf/descriptor.h"
 #include "google/protobuf/descriptor.pb.h"
+#include "google/protobuf/descriptor_legacy.h"
 #include "google/protobuf/io/printer.h"
 #include "google/protobuf/io/zero_copy_stream.h"
 
@@ -78,12 +61,12 @@ struct Options {
 namespace {
 
 // Forward decls.
-std::string PhpName(const std::string& full_name, const Options& options);
+std::string PhpName(absl::string_view full_name, const Options& options);
 std::string IntToString(int32_t value);
-std::string FilenameToClassname(const std::string& filename);
+std::string FilenameToClassname(absl::string_view filename);
 std::string GeneratedMetadataFileName(const FileDescriptor* file,
                                       const Options& options);
-std::string UnderscoresToCamelCase(const std::string& name,
+std::string UnderscoresToCamelCase(absl::string_view name,
                                    bool cap_first_letter);
 void Indent(io::Printer* printer);
 void Outdent(io::Printer* printer);
@@ -135,10 +118,10 @@ std::string LegacyGeneratedClassName(const DescriptorType* desc) {
   return ClassNamePrefix(classname, desc) + classname;
 }
 
-std::string ConstantNamePrefix(const std::string& classname) {
+std::string ConstantNamePrefix(absl::string_view classname) {
   bool is_reserved = false;
 
-  std::string lower = classname;
+  std::string lower(classname);
   std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
 
   is_reserved = IsReservedName(lower);
@@ -161,9 +144,9 @@ template <typename DescriptorType>
 std::string RootPhpNamespace(const DescriptorType* desc,
                              const Options& options) {
   if (desc->file()->options().has_php_namespace()) {
-    const std::string& php_namespace = desc->file()->options().php_namespace();
+    absl::string_view php_namespace = desc->file()->options().php_namespace();
     if (!php_namespace.empty()) {
-      return php_namespace;
+      return std::string(php_namespace);
     }
     return "";
   }
@@ -179,7 +162,7 @@ std::string FullClassName(const DescriptorType* desc, const Options& options) {
   std::string classname = GeneratedClassName(desc);
   std::string php_namespace = RootPhpNamespace(desc, options);
   if (!php_namespace.empty()) {
-    return php_namespace + "\\" + classname;
+    return absl::StrCat(php_namespace, "\\", classname);
   }
   return classname;
 }
@@ -197,17 +180,17 @@ std::string LegacyFullClassName(const DescriptorType* desc,
   std::string classname = LegacyGeneratedClassName(desc);
   std::string php_namespace = RootPhpNamespace(desc, options);
   if (!php_namespace.empty()) {
-    return php_namespace + "\\" + classname;
+    return absl::StrCat(php_namespace, "\\", classname);
   }
   return classname;
 }
 
-std::string PhpNamePrefix(const std::string& classname) {
+std::string PhpNamePrefix(absl::string_view classname) {
   if (IsReservedName(classname)) return "PB";
   return "";
 }
 
-std::string PhpName(const std::string& full_name, const Options& options) {
+std::string PhpName(absl::string_view full_name, const Options& options) {
   if (options.is_descriptor) {
     return std::string(kDescriptorPackageName);
   }
@@ -258,7 +241,7 @@ std::string DefaultForField(const FieldDescriptor* field) {
 
 std::string GeneratedMetadataFileName(const FileDescriptor* file,
                                       const Options& options) {
-  const std::string& proto_file = file->name();
+  absl::string_view proto_file = file->name();
   int start_index = 0;
   int first_index = proto_file.find_first_of('/', start_index);
   std::string result = "";
@@ -272,7 +255,7 @@ std::string GeneratedMetadataFileName(const FileDescriptor* file,
   }
 
   // Append directory name.
-  std::string file_no_suffix;
+  absl::string_view file_no_suffix;
   int lastindex = proto_file.find_last_of('.');
   if (proto_file == kEmptyFile) {
     return std::string(kEmptyMetadataFile);
@@ -281,21 +264,21 @@ std::string GeneratedMetadataFileName(const FileDescriptor* file,
   }
 
   if (file->options().has_php_metadata_namespace()) {
-    const std::string& php_metadata_namespace =
+    absl::string_view php_metadata_namespace =
         file->options().php_metadata_namespace();
     if (!php_metadata_namespace.empty() && php_metadata_namespace != "\\") {
-      result += php_metadata_namespace;
+      absl::StrAppend(&result, php_metadata_namespace);
       std::replace(result.begin(), result.end(), '\\', '/');
       if (result.at(result.size() - 1) != '/') {
-        result += "/";
+        absl::StrAppend(&result, "/");
       }
     }
   } else {
-    result += "GPBMetadata/";
+    absl::StrAppend(&result, "GPBMetadata/");
     while (first_index != std::string::npos) {
       segment = UnderscoresToCamelCase(
           file_no_suffix.substr(start_index, first_index - start_index), true);
-      result += ReservedNamePrefix(segment, file) + segment + "/";
+      absl::StrAppend(&result, ReservedNamePrefix(segment, file), segment, "/");
       start_index = first_index + 1;
       first_index = file_no_suffix.find_first_of('/', start_index);
     }
@@ -311,7 +294,8 @@ std::string GeneratedMetadataFileName(const FileDescriptor* file,
   segment = UnderscoresToCamelCase(
       file_no_suffix.substr(file_name_start, first_index - file_name_start), true);
 
-  return result + ReservedNamePrefix(segment, file) + segment + ".php";
+  return absl::StrCat(result, ReservedNamePrefix(segment, file), segment,
+                      ".php");
 }
 
 std::string GeneratedMetadataFileName(const FileDescriptor* file,
@@ -330,7 +314,7 @@ std::string GeneratedClassFileName(const DescriptorType* desc,
       result[i] = '/';
     }
   }
-  return result + ".php";
+  return absl::StrCat(result, ".php");
 }
 
 template <typename DescriptorType>
@@ -343,7 +327,7 @@ std::string LegacyGeneratedClassFileName(const DescriptorType* desc,
       result[i] = '/';
     }
   }
-  return result + ".php";
+  return absl::StrCat(result, ".php");
 }
 
 template <typename DescriptorType>
@@ -355,21 +339,21 @@ std::string LegacyReadOnlyGeneratedClassFileName(std::string php_namespace,
         php_namespace[i] = '/';
       }
     }
-    return php_namespace + "/" + desc->name() + ".php";
+    return absl::StrCat(php_namespace, "/", desc->name(), ".php");
   }
 
-  return desc->name() + ".php";
+  return absl::StrCat(desc->name(), ".php");
 }
 
 std::string GeneratedServiceFileName(const ServiceDescriptor* service,
                                      const Options& options) {
-  std::string result = FullClassName(service, options) + "Interface";
+  std::string result = FullClassName(service, options);
   for (int i = 0; i < result.size(); i++) {
     if (result[i] == '\\') {
       result[i] = '/';
     }
   }
-  return result + ".php";
+  return absl::StrCat(result, "Interface", ".php");
 }
 
 std::string IntToString(int32_t value) {
@@ -421,7 +405,7 @@ std::string PhpSetterTypeName(const FieldDescriptor* field,
       type = "string";
       break;
     case FieldDescriptor::TYPE_MESSAGE:
-      type = "\\" + FullClassName(field->message_type(), options);
+      type = absl::StrCat("\\", FullClassName(field->message_type(), options));
       break;
     case FieldDescriptor::TYPE_GROUP:
       return "null";
@@ -433,7 +417,8 @@ std::string PhpSetterTypeName(const FieldDescriptor* field,
     if (start_pos != std::string::npos) {
       type.replace(start_pos, 1, ">|array<");
     }
-    type = "array<" + type + ">|\\Google\\Protobuf\\Internal\\RepeatedField";
+    type = absl::StrCat("array<", type,
+                        ">|\\Google\\Protobuf\\Internal\\RepeatedField");
   }
   return type;
 }
@@ -471,7 +456,7 @@ std::string PhpGetterTypeName(const FieldDescriptor* field,
     case FieldDescriptor::TYPE_STRING:
     case FieldDescriptor::TYPE_BYTES: return "string";
     case FieldDescriptor::TYPE_MESSAGE:
-      return "\\" + FullClassName(field->message_type(), options);
+      return absl::StrCat("\\", FullClassName(field->message_type(), options));
     case FieldDescriptor::TYPE_GROUP: return "null";
     default: assert(false); return "";
   }
@@ -487,13 +472,14 @@ std::string PhpGetterTypeName(const FieldDescriptor* field,
 std::string EnumOrMessageSuffix(const FieldDescriptor* field,
                                 const Options& options) {
   if (field->cpp_type() == FieldDescriptor::CPPTYPE_MESSAGE) {
-    return ", '" +
-           DescriptorFullName(field->message_type(), options.is_descriptor) +
-           "'";
+    return absl::StrCat(
+        ", '", DescriptorFullName(field->message_type(), options.is_descriptor),
+        "'");
   }
   if (field->cpp_type() == FieldDescriptor::CPPTYPE_ENUM) {
-    return ", '" +
-           DescriptorFullName(field->enum_type(), options.is_descriptor) + "'";
+    return absl::StrCat(
+        ", '", DescriptorFullName(field->enum_type(), options.is_descriptor),
+        "'");
   }
   return "";
 }
@@ -507,7 +493,7 @@ std::string EnumOrMessageSuffix(const FieldDescriptor* field,
 
 // Converts a name to camel-case. If cap_first_letter is true, capitalize the
 // first letter.
-std::string UnderscoresToCamelCase(const std::string& name,
+std::string UnderscoresToCamelCase(absl::string_view name,
                                    bool cap_first_letter) {
   std::string result;
   for (int i = 0; i < name.size(); i++) {
@@ -588,8 +574,11 @@ void GenerateFieldAccessor(const FieldDescriptor* field, const Options& options,
   GenerateFieldDocComment(printer, field, options, kFieldGetter);
 
   // deprecation
-  std::string deprecation_trigger = (field->options().deprecated()) ? "@trigger_error('" +
-      field->name() + " is deprecated.', E_USER_DEPRECATED);\n        " : "";
+  std::string deprecation_trigger =
+      (field->options().deprecated())
+          ? absl::StrCat("@trigger_error('", field->name(),
+                         " is deprecated.', E_USER_DEPRECATED);\n        ")
+          : "";
 
   // Emit getter.
   if (oneof != NULL) {
@@ -692,15 +681,13 @@ void GenerateFieldAccessor(const FieldDescriptor* field, const Options& options,
         "key_type", absl::AsciiStrToUpper(key->type_name()),
         "value_type", absl::AsciiStrToUpper(value->type_name()));
     if (value->cpp_type() == FieldDescriptor::CPPTYPE_MESSAGE) {
-      printer->Print(
-          ", \\^class_name^);\n",
-          "class_name",
-          FullClassName(value->message_type(), options) + "::class");
+      printer->Print(", \\^class_name^);\n", "class_name",
+                     absl::StrCat(FullClassName(value->message_type(), options),
+                                  "::class"));
     } else if (value->cpp_type() == FieldDescriptor::CPPTYPE_ENUM) {
       printer->Print(
-          ", \\^class_name^);\n",
-          "class_name",
-          FullClassName(value->enum_type(), options) + "::class");
+          ", \\^class_name^);\n", "class_name",
+          absl::StrCat(FullClassName(value->enum_type(), options), "::class"));
     } else {
       printer->Print(");\n");
     }
@@ -710,15 +697,13 @@ void GenerateFieldAccessor(const FieldDescriptor* field, const Options& options,
         "\\Google\\Protobuf\\Internal\\GPBType::^type^",
         "type", absl::AsciiStrToUpper(field->type_name()));
     if (field->cpp_type() == FieldDescriptor::CPPTYPE_MESSAGE) {
-      printer->Print(
-          ", \\^class_name^);\n",
-          "class_name",
-          FullClassName(field->message_type(), options) + "::class");
+      printer->Print(", \\^class_name^);\n", "class_name",
+                     absl::StrCat(FullClassName(field->message_type(), options),
+                                  "::class"));
     } else if (field->cpp_type() == FieldDescriptor::CPPTYPE_ENUM) {
       printer->Print(
-          ", \\^class_name^);\n",
-          "class_name",
-          FullClassName(field->enum_type(), options) + "::class");
+          ", \\^class_name^);\n", "class_name",
+          absl::StrCat(FullClassName(field->enum_type(), options), "::class"));
     } else {
       printer->Print(");\n");
     }
@@ -808,16 +793,16 @@ void GenerateServiceMethod(const MethodDescriptor* method,
   );
 }
 
-void GenerateMessageToPool(const std::string& name_prefix,
+void GenerateMessageToPool(absl::string_view name_prefix,
                            const Descriptor* message, io::Printer* printer) {
   // Don't generate MapEntry messages -- we use the PHP extension's native
   // support for map fields instead.
   if (message->options().map_entry()) {
     return;
   }
-  std::string class_name =
-      (name_prefix.empty() ? "" : name_prefix + "\\") +
-      ReservedNamePrefix(message->name(), message->file()) + message->name();
+  std::string class_name = absl::StrCat(
+      name_prefix.empty() ? "" : absl::StrCat(name_prefix, "\\"),
+      ReservedNamePrefix(message->name(), message->file()), message->name());
 
   printer->Print(
       "$pool->addMessage('^message^', "
@@ -919,7 +904,7 @@ void GenerateAddFileToPool(const FileDescriptor* file, const Options& options,
           "$pool->finish();\n");
     } else {
       for (int i = 0; i < file->dependency_count(); i++) {
-        const std::string& name = file->dependency(i)->name();
+        absl::string_view name = file->dependency(i)->name();
         // Currently, descriptor.proto is not ready for external usage. Skip to
         // import it for now, so that its dependencies can still work as long as
         // they don't use protos defined in descriptor.proto.
@@ -936,7 +921,7 @@ void GenerateAddFileToPool(const FileDescriptor* file, const Options& options,
       // Add messages and enums to descriptor pool.
       FileDescriptorSet files;
       FileDescriptorProto* file_proto = files.add_file();
-      file->CopyTo(file_proto);
+      *file_proto = StripSourceRetentionOptions(*file);
 
       // Filter out descriptor.proto as it cannot be depended on for now.
       RepeatedPtrField<std::string>* dependency =
@@ -1079,7 +1064,7 @@ void GenerateAddFilesToPool(const FileDescriptor* file, const Options& options,
 
     if (needs_aggregate) {
       auto file_proto = sorted_file_set.add_file();
-      file_node->CopyTo(file_proto);
+      *file_proto = StripSourceRetentionOptions(*file_node);
 
       // Filter out descriptor.proto as it cannot be depended on for now.
       RepeatedPtrField<std::string>* dependency =
@@ -1163,10 +1148,10 @@ void GenerateHead(const FileDescriptor* file, io::Printer* printer) {
     "filename", file->name());
 }
 
-std::string FilenameToClassname(const std::string& filename) {
-  int lastindex = filename.find_last_of('.');
-  std::string result = filename.substr(0, lastindex);
-  for (int i = 0; i < result.size(); i++) {
+std::string FilenameToClassname(absl::string_view filename) {
+  size_t lastindex = filename.find_last_of('.');
+  std::string result(filename.substr(0, lastindex));
+  for (size_t i = 0; i < result.size(); i++) {
     if (result[i] == '/') {
       result[i] = '\\';
     }
@@ -1621,7 +1606,7 @@ void GenerateFile(const FileDescriptor* file, const Options& options,
   }
 }
 
-static std::string EscapePhpdoc(const std::string& input) {
+static std::string EscapePhpdoc(absl::string_view input) {
   std::string result;
   result.reserve(input.size() * 2);
 
@@ -1670,7 +1655,7 @@ static void GenerateDocCommentBodyForLocation(
                              ? location.trailing_comments
                              : location.leading_comments;
   if (!comments.empty()) {
-    // TODO(teboring):  Ideally we should parse the comment text as Markdown and
+    // TODO:  Ideally we should parse the comment text as Markdown and
     //   write it back as HTML, but this requires a Markdown parser.  For now
     //   we just use the proto comments unchanged.
 
@@ -1678,7 +1663,8 @@ static void GenerateDocCommentBodyForLocation(
     // HTML-escape them so that they don't accidentally close the doc comment.
     comments = EscapePhpdoc(comments);
 
-    std::vector<std::string> lines = absl::StrSplit(comments, "\n", absl::SkipEmpty());
+    std::vector<absl::string_view> lines =
+        absl::StrSplit(comments, '\n', absl::SkipEmpty());
     while (!lines.empty() && lines.back().empty()) {
       lines.pop_back();
     }
@@ -1709,8 +1695,8 @@ static void GenerateDocCommentBody(
   }
 }
 
-static std::string FirstLineOf(const std::string& value) {
-  std::string result = value;
+static std::string FirstLineOf(absl::string_view value) {
+  std::string result(value);
 
   std::string::size_type pos = result.find_first_of('\n');
   if (pos != std::string::npos) {
@@ -1724,6 +1710,10 @@ void GenerateMessageDocComment(io::Printer* printer, const Descriptor* message,
                                const Options& options) {
   printer->Print("/**\n");
   GenerateDocCommentBody(printer, message);
+  if (message->options().deprecated()) {
+    printer->Print(" * @deprecated\n");
+  }
+
   printer->Print(
     " * Generated from protobuf message <code>^messagename^</code>\n"
     " */\n",
@@ -1765,6 +1755,9 @@ void GenerateMessageConstructorDocComment(io::Printer* printer,
 void GenerateServiceDocComment(io::Printer* printer,
                                const ServiceDescriptor* service) {
   printer->Print("/**\n");
+  if (service->options().deprecated()) {
+    printer->Print(" * @deprecated\n");
+  }
   GenerateDocCommentBody(printer, service);
   printer->Print(
     " * Protobuf type <code>^fullname^</code>\n"
@@ -1842,6 +1835,9 @@ void GenerateWrapperFieldSetterDocComment(io::Printer* printer, const FieldDescr
 void GenerateEnumDocComment(io::Printer* printer, const EnumDescriptor* enum_,
                             const Options& options) {
   printer->Print("/**\n");
+  if (enum_->options().deprecated()) {
+    printer->Print(" * @deprecated\n");
+  }
   GenerateDocCommentBody(printer, enum_);
   printer->Print(
     " * Protobuf type <code>^fullname^</code>\n"
@@ -1863,6 +1859,9 @@ void GenerateServiceMethodDocComment(io::Printer* printer,
                                      const MethodDescriptor* method) {
   printer->Print("/**\n");
   GenerateDocCommentBody(printer, method);
+  if (method->options().deprecated()) {
+    printer->Print(" * @deprecated\n");
+  }
   printer->Print(
     " * Method <code>^method_name^</code>\n"
     " *\n",
@@ -2171,8 +2170,7 @@ void GenerateCWellKnownTypes(const std::vector<const FileDescriptor*>& files,
         absl::StrReplaceAll(metadata_classname, {{"\\", "_"}});
     metadata_classname =
         absl::StrReplaceAll(metadata_classname, {{"\\", "\\\\"}});
-    FileDescriptorProto file_proto;
-    file->CopyTo(&file_proto);
+    FileDescriptorProto file_proto = StripSourceRetentionOptions(*file);
     std::string serialized;
     file_proto.SerializeToString(&serialized);
     printer.Print(
@@ -2285,7 +2283,9 @@ bool Generator::Generate(const FileDescriptor* file, const Options& options,
     return false;
   }
 
-  if (!options.is_descriptor && file->syntax() != FileDescriptor::SYNTAX_PROTO3) {
+  if (!options.is_descriptor &&
+      FileDescriptorLegacy(file).syntax() !=
+          FileDescriptorLegacy::Syntax::SYNTAX_PROTO3) {
     *error =
         "Can only generate PHP code for proto3 .proto files.\n"
         "Please add 'syntax = \"proto3\";' to the top of your .proto file.\n";
@@ -2309,14 +2309,14 @@ bool Generator::GenerateAll(const std::vector<const FileDescriptor*>& files,
       options.aggregate_metadata = true;
       for (const auto& prefix : absl::StrSplit(option_pair[1], "#", absl::AllowEmpty())) {
         options.aggregate_metadata_prefixes.emplace(prefix);
-        GOOGLE_LOG(INFO) << prefix;
+        ABSL_LOG(INFO) << prefix;
       }
     } else if (option_pair[0] == "internal") {
       options.is_descriptor = true;
     } else if (option_pair[0] == "internal_generate_c_wkt") {
       GenerateCWellKnownTypes(files, generator_context);
     } else {
-      GOOGLE_LOG(FATAL) << "Unknown codegen option: " << option_pair[0];
+      ABSL_LOG(FATAL) << "Unknown codegen option: " << option_pair[0];
     }
   }
 

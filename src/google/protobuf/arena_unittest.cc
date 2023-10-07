@@ -1,48 +1,27 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 #include "google/protobuf/arena.h"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstring>
 #include <memory>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <typeinfo>
 #include <vector>
 
-#include "google/protobuf/stubs/logging.h"
-#include "google/protobuf/stubs/common.h"
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "absl/log/absl_check.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/barrier.h"
 #include "google/protobuf/arena_test_util.h"
@@ -52,6 +31,7 @@
 #include "google/protobuf/io/zero_copy_stream_impl_lite.h"
 #include "google/protobuf/message.h"
 #include "google/protobuf/message_lite.h"
+#include "google/protobuf/port.h"
 #include "google/protobuf/repeated_field.h"
 #include "google/protobuf/test_util.h"
 #include "google/protobuf/unittest.pb.h"
@@ -334,6 +314,16 @@ TEST(ArenaTest, CreateDestroy) {
             strlen(arena_message->optional_string().c_str()));
 }
 
+struct OnlyArenaConstructible {
+  using InternalArenaConstructable_ = void;
+  explicit OnlyArenaConstructible(Arena* arena) {}
+};
+
+TEST(ArenaTest, ArenaOnlyTypesCanBeConstructed) {
+  Arena arena;
+  Arena::CreateMessage<OnlyArenaConstructible>(&arena);
+}
+
 TEST(ArenaTest, Parsing) {
   TestAllTypes original;
   TestUtil::SetAllFields(&original);
@@ -571,16 +561,6 @@ TEST(ArenaTest, UnsafeArenaSwap) {
   TestUtil::ExpectAllFieldsSet(*message2);
 }
 
-TEST(ArenaTest, GetOwningArena) {
-  Arena arena;
-  auto* m1 = Arena::CreateMessage<TestAllTypes>(&arena);
-  EXPECT_EQ(Arena::InternalGetOwningArena(m1), &arena);
-  EXPECT_EQ(&arena, Arena::InternalGetOwningArena(
-                        m1->mutable_repeated_foreign_message()));
-  EXPECT_EQ(&arena,
-            Arena::InternalGetOwningArena(m1->mutable_repeated_int32()));
-}
-
 TEST(ArenaTest, SwapBetweenArenasUsingReflection) {
   Arena arena1;
   TestAllTypes* arena1_message = Arena::CreateMessage<TestAllTypes>(&arena1);
@@ -661,7 +641,7 @@ TEST(ArenaTest, SetAllocatedAcrossArenas) {
     TestAllTypes::NestedMessage* arena2_submessage =
         Arena::CreateMessage<TestAllTypes::NestedMessage>(&arena2);
     arena2_submessage->set_bb(42);
-#ifdef PROTOBUF_HAS_DEATH_TEST
+#if GTEST_HAS_DEATH_TEST
     EXPECT_DEBUG_DEATH(arena1_message->set_allocated_optional_nested_message(
                            arena2_submessage),
                        "submessage_arena");
@@ -674,7 +654,7 @@ TEST(ArenaTest, SetAllocatedAcrossArenas) {
       Arena::CreateMessage<TestAllTypes::NestedMessage>(&arena1);
   arena1_submessage->set_bb(42);
   TestAllTypes* heap_message = new TestAllTypes;
-#ifdef PROTOBUF_HAS_DEATH_TEST
+#if GTEST_HAS_DEATH_TEST
   EXPECT_DEBUG_DEATH(
       heap_message->set_allocated_optional_nested_message(arena1_submessage),
       "submessage_arena");
@@ -730,10 +710,10 @@ TEST(ArenaTest, SetAllocatedAcrossArenasWithReflection) {
     TestAllTypes::NestedMessage* arena2_submessage =
         Arena::CreateMessage<TestAllTypes::NestedMessage>(&arena2);
     arena2_submessage->set_bb(42);
-#ifdef PROTOBUF_HAS_DEATH_TEST
+#if GTEST_HAS_DEATH_TEST
     EXPECT_DEBUG_DEATH(
         r->SetAllocatedMessage(arena1_message, arena2_submessage, msg_field),
-        "GetOwningArena");
+        "GetArena");
 #endif
     EXPECT_NE(arena2_submessage,
               arena1_message->mutable_optional_nested_message());
@@ -743,10 +723,10 @@ TEST(ArenaTest, SetAllocatedAcrossArenasWithReflection) {
       Arena::CreateMessage<TestAllTypes::NestedMessage>(&arena1);
   arena1_submessage->set_bb(42);
   TestAllTypes* heap_message = new TestAllTypes;
-#ifdef PROTOBUF_HAS_DEATH_TEST
+#if GTEST_HAS_DEATH_TEST
   EXPECT_DEBUG_DEATH(
       r->SetAllocatedMessage(heap_message, arena1_submessage, msg_field),
-      "GetOwningArena");
+      "GetArena");
 #endif
   EXPECT_NE(arena1_submessage, heap_message->mutable_optional_nested_message());
   delete heap_message;
@@ -800,6 +780,7 @@ TEST(ArenaTest, AddAllocatedWithReflection) {
 TEST(ArenaTest, RepeatedPtrFieldAddClearedTest) {
 #ifndef PROTOBUF_FUTURE_REMOVE_CLEARED_API
   {
+    PROTOBUF_IGNORE_DEPRECATION_START
     RepeatedPtrField<TestAllTypes> repeated_field;
     EXPECT_TRUE(repeated_field.empty());
     EXPECT_EQ(0, repeated_field.size());
@@ -808,6 +789,7 @@ TEST(ArenaTest, RepeatedPtrFieldAddClearedTest) {
     repeated_field.AddCleared(cleared);
     EXPECT_TRUE(repeated_field.empty());
     EXPECT_EQ(0, repeated_field.size());
+    PROTOBUF_IGNORE_DEPRECATION_STOP
   }
 #endif  // !PROTOBUF_FUTURE_REMOVE_CLEARED_API
   {
@@ -844,14 +826,13 @@ TEST(ArenaTest, AddAllocatedToRepeatedField) {
     TestAllTypes::NestedMessage* arena2_submessage =
         Arena::CreateMessage<TestAllTypes::NestedMessage>(&arena2);
     arena2_submessage->set_bb(42);
-#ifdef PROTOBUF_HAS_DEATH_TEST
-    EXPECT_DEBUG_DEATH(
-        arena1_message->mutable_repeated_nested_message()->AddAllocated(
-            arena2_submessage),
-        "value_arena");
-#endif
-    // Should not receive object.
-    EXPECT_TRUE(arena1_message->repeated_nested_message().empty());
+    arena1_message->mutable_repeated_nested_message()->AddAllocated(
+        arena2_submessage);
+    ASSERT_THAT(arena1_message->repeated_nested_message(), testing::SizeIs(1));
+    EXPECT_EQ(
+        arena1_message->mutable_repeated_nested_message()->at(0).GetArena(),
+        &arena1);
+    arena1_message->clear_repeated_nested_message();
   }
 
   // Arena->heap case.
@@ -861,14 +842,12 @@ TEST(ArenaTest, AddAllocatedToRepeatedField) {
     TestAllTypes::NestedMessage* arena2_submessage =
         Arena::CreateMessage<TestAllTypes::NestedMessage>(&arena2);
     arena2_submessage->set_bb(42);
-#ifdef PROTOBUF_HAS_DEATH_TEST
-    EXPECT_DEBUG_DEATH(
-        heap_message->mutable_repeated_nested_message()->AddAllocated(
-            arena2_submessage),
-        "value_arena");
-#endif
-    // Should not receive object.
-    EXPECT_TRUE(heap_message->repeated_nested_message().empty());
+    heap_message->mutable_repeated_nested_message()->AddAllocated(
+        arena2_submessage);
+    ASSERT_THAT(heap_message->repeated_nested_message(), testing::SizeIs(1));
+    EXPECT_EQ(heap_message->mutable_repeated_nested_message()->at(0).GetArena(),
+              nullptr);
+    heap_message->clear_repeated_nested_message();
   }
   delete heap_message;
 
@@ -966,13 +945,12 @@ TEST(ArenaTest, AddAllocatedToRepeatedFieldViaReflection) {
     TestAllTypes::NestedMessage* arena2_submessage =
         Arena::CreateMessage<TestAllTypes::NestedMessage>(&arena2);
     arena2_submessage->set_bb(42);
-#ifdef PROTOBUF_HAS_DEATH_TEST
-    EXPECT_DEBUG_DEATH(
-        r->AddAllocatedMessage(arena1_message, fd, arena2_submessage),
-        "value_arena");
-#endif
-    // Should not receive object.
-    EXPECT_TRUE(arena1_message->repeated_nested_message().empty());
+    r->AddAllocatedMessage(arena1_message, fd, arena2_submessage);
+    ASSERT_THAT(arena1_message->repeated_nested_message(), testing::SizeIs(1));
+    EXPECT_EQ(
+        arena1_message->mutable_repeated_nested_message()->at(0).GetArena(),
+        &arena1);
+    arena1_message->clear_repeated_nested_message();
   }
 
   // Arena->heap case.
@@ -982,13 +960,11 @@ TEST(ArenaTest, AddAllocatedToRepeatedFieldViaReflection) {
     TestAllTypes::NestedMessage* arena2_submessage =
         Arena::CreateMessage<TestAllTypes::NestedMessage>(&arena2);
     arena2_submessage->set_bb(42);
-#ifdef PROTOBUF_HAS_DEATH_TEST
-    EXPECT_DEBUG_DEATH(
-        r->AddAllocatedMessage(heap_message, fd, arena2_submessage),
-        "value_arena");
-#endif
-    // Should not receive object.
-    EXPECT_TRUE(heap_message->repeated_nested_message().empty());
+    r->AddAllocatedMessage(heap_message, fd, arena2_submessage);
+    ASSERT_THAT(heap_message->repeated_nested_message(), testing::SizeIs(1));
+    EXPECT_EQ(heap_message->mutable_repeated_nested_message()->at(0).GetArena(),
+              nullptr);
+    heap_message->clear_repeated_nested_message();
   }
   delete heap_message;
 }
@@ -1360,25 +1336,6 @@ TEST(ArenaTest, MessageLiteOnArena) {
 }
 #endif  // PROTOBUF_RTTI
 
-// RepeatedField should support non-POD types, and invoke constructors and
-// destructors appropriately, because it's used this way by lots of other code
-// (even if this was not its original intent).
-TEST(ArenaTest, RepeatedFieldWithNonPODType) {
-  {
-    RepeatedField<std::string> field_on_heap;
-    for (int i = 0; i < 100; i++) {
-      *field_on_heap.Add() = "test string long enough to exceed inline buffer";
-    }
-  }
-  {
-    Arena arena;
-    RepeatedField<std::string> field_on_arena(&arena);
-    for (int i = 0; i < 100; i++) {
-      *field_on_arena.Add() = "test string long enough to exceed inline buffer";
-    }
-  }
-}
-
 // Align n to next multiple of 8
 uint64_t Align8(uint64_t n) { return (n + 7) & -8; }
 
@@ -1458,7 +1415,7 @@ TEST(ArenaTest, Alignment) {
   Arena arena;
   for (int i = 0; i < 200; i++) {
     void* p = Arena::CreateArray<char>(&arena, i);
-    GOOGLE_CHECK_EQ(reinterpret_cast<uintptr_t>(p) % 8, 0) << i << ": " << p;
+    ABSL_CHECK_EQ(reinterpret_cast<uintptr_t>(p) % 8, 0) << i << ": " << p;
   }
 }
 
@@ -1482,44 +1439,21 @@ TEST(ArenaTest, GetArenaShouldReturnTheArenaForArenaAllocatedMessages) {
   Arena arena;
   ArenaMessage* message = Arena::CreateMessage<ArenaMessage>(&arena);
   const ArenaMessage* const_pointer_to_message = message;
-  EXPECT_EQ(&arena, Arena::GetArena(message));
-  EXPECT_EQ(&arena, Arena::GetArena(const_pointer_to_message));
+  EXPECT_EQ(&arena, message->GetArena());
+  EXPECT_EQ(&arena, const_pointer_to_message->GetArena());
 
   // Test that the Message* / MessageLite* specialization SFINAE works.
   const Message* const_pointer_to_message_type = message;
-  EXPECT_EQ(&arena, Arena::GetArena(const_pointer_to_message_type));
+  EXPECT_EQ(&arena, const_pointer_to_message_type->GetArena());
   const MessageLite* const_pointer_to_message_lite_type = message;
-  EXPECT_EQ(&arena, Arena::GetArena(const_pointer_to_message_lite_type));
+  EXPECT_EQ(&arena, const_pointer_to_message_lite_type->GetArena());
 }
 
 TEST(ArenaTest, GetArenaShouldReturnNullForNonArenaAllocatedMessages) {
   ArenaMessage message;
   const ArenaMessage* const_pointer_to_message = &message;
-  EXPECT_EQ(nullptr, Arena::GetArena(&message));
-  EXPECT_EQ(nullptr, Arena::GetArena(const_pointer_to_message));
-}
-
-TEST(ArenaTest, GetArenaShouldReturnNullForNonArenaCompatibleTypes) {
-  // Test that GetArena returns nullptr for types that have a GetArena method
-  // that doesn't return Arena*.
-  struct {
-    int GetArena() const { return 0; }
-  } has_get_arena_method_wrong_return_type;
-  EXPECT_EQ(nullptr, Arena::GetArena(&has_get_arena_method_wrong_return_type));
-
-  // Test that GetArena returns nullptr for types that have a GetArena alias.
-  struct {
-    using GetArena = Arena*;
-    GetArena unused;
-  } has_get_arena_alias;
-  EXPECT_EQ(nullptr, Arena::GetArena(&has_get_arena_alias));
-
-  // Test that GetArena returns nullptr for types that have a GetArena data
-  // member.
-  struct {
-    Arena GetArena;
-  } has_get_arena_data_member;
-  EXPECT_EQ(nullptr, Arena::GetArena(&has_get_arena_data_member));
+  EXPECT_EQ(nullptr, message.GetArena());
+  EXPECT_EQ(nullptr, const_pointer_to_message->GetArena());
 }
 
 TEST(ArenaTest, AddCleanup) {

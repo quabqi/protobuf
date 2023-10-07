@@ -1,53 +1,28 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 // Author: kenton@google.com (Kenton Varda)
 //  Based on original Protocol Buffers design by
 //  Sanjay Ghemawat, Jeff Dean, and others.
-
-#include "google/protobuf/io/printer.h"
 
 #include <ostream>
 #include <string>
 #include <tuple>
 #include <vector>
 
-#include "google/protobuf/stubs/logging.h"
-#include "google/protobuf/stubs/common.h"
 #include "google/protobuf/descriptor.pb.h"
 #include <gmock/gmock.h>
 #include "google/protobuf/testing/googletest.h"
 #include <gtest/gtest.h>
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/absl_check.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
+#include "google/protobuf/io/printer.h"
 #include "google/protobuf/io/zero_copy_stream.h"
 #include "google/protobuf/io/zero_copy_stream_impl.h"
 #include "google/protobuf/io/zero_copy_stream_impl_lite.h"
@@ -55,10 +30,11 @@
 namespace google {
 namespace protobuf {
 namespace io {
-class PrinterTest : public testing::Test {
+namespace {
+class PrinterDeathTest : public testing::Test {
  protected:
   ZeroCopyOutputStream* output() {
-    GOOGLE_CHECK(stream_.has_value());
+    ABSL_CHECK(stream_.has_value());
     return &*stream_;
   }
   absl::string_view written() {
@@ -91,14 +67,15 @@ class FakeAnnotationCollector : public AnnotationCollector {
  public:
   ~FakeAnnotationCollector() override = default;
 
+  using AnnotationCollector::AddAnnotation;
   void AddAnnotation(size_t begin_offset, size_t end_offset,
                      const std::string& file_path,
                      const std::vector<int>& path) override {
   }
 };
 
-#ifdef PROTOBUF_HAS_DEATH_TEST
-TEST_F(PrinterTest, Death) {
+#if GTEST_HAS_DEATH_TEST
+TEST_F(PrinterDeathTest, Death) {
   Printer printer(output(), '$');
 
   EXPECT_DEBUG_DEATH(printer.Print("$nosuchvar$"), "");
@@ -106,7 +83,7 @@ TEST_F(PrinterTest, Death) {
   EXPECT_DEBUG_DEATH(printer.Outdent(), "");
 }
 
-TEST_F(PrinterTest, AnnotateMultipleUsesDeath) {
+TEST_F(PrinterDeathTest, AnnotateMultipleUsesDeath) {
   FakeAnnotationCollector collector;
   Printer printer(output(), '$', &collector);
   printer.Print("012$foo$4$foo$\n", "foo", "3");
@@ -115,7 +92,7 @@ TEST_F(PrinterTest, AnnotateMultipleUsesDeath) {
   EXPECT_DEBUG_DEATH(printer.Annotate("foo", "foo", &descriptor), "");
 }
 
-TEST_F(PrinterTest, AnnotateNegativeLengthDeath) {
+TEST_F(PrinterDeathTest, AnnotateNegativeLengthDeath) {
   FakeAnnotationCollector collector;
   Printer printer(output(), '$', &collector);
   printer.Print("012$foo$4$bar$\n", "foo", "3", "bar", "5");
@@ -124,7 +101,7 @@ TEST_F(PrinterTest, AnnotateNegativeLengthDeath) {
   EXPECT_DEBUG_DEATH(printer.Annotate("bar", "foo", &descriptor), "");
 }
 
-TEST_F(PrinterTest, AnnotateUndefinedDeath) {
+TEST_F(PrinterDeathTest, AnnotateUndefinedDeath) {
   FakeAnnotationCollector collector;
   Printer printer(output(), '$', &collector);
   printer.Print("012$foo$4$foo$\n", "foo", "3");
@@ -133,42 +110,43 @@ TEST_F(PrinterTest, AnnotateUndefinedDeath) {
   EXPECT_DEBUG_DEATH(printer.Annotate("bar", "bar", &descriptor), "");
 }
 
-TEST_F(PrinterTest, FormatInternalUnusedArgs) {
+TEST_F(PrinterDeathTest, FormatInternalUnusedArgs) {
   FakeAnnotationCollector collector;
   Printer printer(output(), '$', &collector);
 
   EXPECT_DEATH(printer.FormatInternal({"arg1", "arg2"}, {}, "$1$"), "");
 }
 
-TEST_F(PrinterTest, FormatInternalOutOfOrderArgs) {
+TEST_F(PrinterDeathTest, FormatInternalOutOfOrderArgs) {
   FakeAnnotationCollector collector;
   Printer printer(output(), '$', &collector);
 
   EXPECT_DEATH(printer.FormatInternal({"arg1", "arg2"}, {}, "$2$ $1$"), "");
 }
 
-TEST_F(PrinterTest, FormatInternalZeroArg) {
+TEST_F(PrinterDeathTest, FormatInternalZeroArg) {
   FakeAnnotationCollector collector;
   Printer printer(output(), '$', &collector);
 
   EXPECT_DEATH(printer.FormatInternal({"arg1", "arg2"}, {}, "$0$"), "");
 }
 
-TEST_F(PrinterTest, FormatInternalOutOfBounds) {
+TEST_F(PrinterDeathTest, FormatInternalOutOfBounds) {
   FakeAnnotationCollector collector;
   Printer printer(output(), '$', &collector);
 
   EXPECT_DEATH(printer.FormatInternal({"arg1", "arg2"}, {}, "$1$ $2$ $3$"), "");
 }
 
-TEST_F(PrinterTest, FormatInternalUnknownVar) {
+TEST_F(PrinterDeathTest, FormatInternalUnknownVar) {
   FakeAnnotationCollector collector;
   Printer printer(output(), '$', &collector);
 
   EXPECT_DEATH(printer.FormatInternal({}, {}, "$huh$"), "");
   EXPECT_DEATH(printer.FormatInternal({}, {}, "$ $"), "");
 }
-#endif  // PROTOBUF_HAS_DEATH_TEST
+#endif  // GTEST_HAS_DEATH_TEST
+}  // namespace
 }  // namespace io
 }  // namespace protobuf
 }  // namespace google

@@ -1,42 +1,18 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 #include "google/protobuf/compiler/objectivec/text_format_decode_data.h"
 
-#include <iostream>
-#include <ostream>
+#include <cstdint>
 #include <sstream>
 #include <string>
 #include <vector>
 
-#include "google/protobuf/compiler/code_generator.h"
+#include "absl/log/absl_check.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/match.h"
@@ -58,7 +34,7 @@ class DecodeDataBuilder {
  public:
   DecodeDataBuilder() { Reset(); }
 
-  bool AddCharacter(const char desired, const char input);
+  bool AddCharacter(char desired, char input);
   void AddUnderscore() {
     Push();
     need_underscore_ = true;
@@ -122,7 +98,7 @@ class DecodeDataBuilder {
   std::string decode_data_;
 };
 
-bool DecodeDataBuilder::AddCharacter(const char desired, const char input) {
+bool DecodeDataBuilder::AddCharacter(char desired, char input) {
   // If we've hit the max size, push to start a new segment.
   if (segment_len_ == kMaxSegmentLen) {
     Push();
@@ -175,13 +151,10 @@ void TextFormatDecodeData::AddString(int32_t key,
                                      const std::string& desired_output) {
   for (std::vector<DataEntry>::const_iterator i = entries_.begin();
        i != entries_.end(); ++i) {
-    if (i->first == key) {
-      std::cerr << "error: duplicate key (" << key
-                << ") making TextFormat data, input: \"" << input_for_decode
-                << "\", desired: \"" << desired_output << "\"." << std::endl;
-      std::cerr.flush();
-      abort();
-    }
+    ABSL_CHECK(i->first != key)
+        << "error: duplicate key (" << key
+        << ") making TextFormat data, input: \"" << input_for_decode
+        << "\", desired: \"" << desired_output << "\".";
   }
 
   const std::string& data = TextFormatDecodeData::DecodeDataForString(
@@ -211,22 +184,14 @@ std::string TextFormatDecodeData::Data() const {
 // static
 std::string TextFormatDecodeData::DecodeDataForString(
     const std::string& input_for_decode, const std::string& desired_output) {
-  if (input_for_decode.empty() || desired_output.empty()) {
-    std::cerr << "error: got empty string for making TextFormat data, input: \""
-              << input_for_decode << "\", desired: \"" << desired_output
-              << "\"." << std::endl;
-    std::cerr.flush();
-    abort();
-  }
-  if ((absl::StrContains(input_for_decode, '\0')) ||
-      (absl::StrContains(desired_output, '\0'))) {
-    std::cerr
-        << "error: got a null char in a string for making TextFormat data,"
-        << " input: \"" << absl::CEscape(input_for_decode) << "\", desired: \""
-        << absl::CEscape(desired_output) << "\"." << std::endl;
-    std::cerr.flush();
-    abort();
-  }
+  ABSL_CHECK(!input_for_decode.empty() && !desired_output.empty())
+      << "error: got empty string for making TextFormat data, input: \""
+      << input_for_decode << "\", desired: \"" << desired_output << "\".";
+  ABSL_CHECK(!absl::StrContains(input_for_decode, '\0') &&
+             !absl::StrContains(desired_output, '\0'))
+      << "error: got a null char in a string for making TextFormat data,"
+      << " input: \"" << absl::CEscape(input_for_decode) << "\", desired: \""
+      << absl::CEscape(desired_output) << "\".";
 
   DecodeDataBuilder builder;
 

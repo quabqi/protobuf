@@ -1,32 +1,9 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 #import "GPBTestUtilities.h"
 
@@ -89,7 +66,7 @@
 
 @implementation MessageTests
 
-// TODO(thomasvl): this should get split into a few files of logic junks, it is
+// TODO: this should get split into a few files of logic junks, it is
 // a jumble of things at the moment (and the testutils have a bunch of the real
 // assertions).
 
@@ -224,7 +201,11 @@
   result = [self mergeExtensionsDestination];
   NSData *data = [[self mergeExtensionsSource] data];
   XCTAssertNotNil(data);
-  [result mergeFromData:data extensionRegistry:[UnittestRoot extensionRegistry]];
+  NSError *error = nil;
+  XCTAssertTrue([result mergeFromData:data
+                    extensionRegistry:[UnittestRoot extensionRegistry]
+                                error:&error]);
+  XCTAssertNil(error);
   resultData = [result data];
   XCTAssertEqualObjects(resultData, mergeResultData);
   XCTAssertEqualObjects(result, [self mergeExtensionsResult]);
@@ -1479,6 +1460,82 @@
   [message2 mergeFrom:message];
 
   XCTAssertEqualObjects(message, message2);
+}
+
+- (void)testClosedEnumsInExtensions {
+  // Only unknown values.
+
+  NSData *data =
+      DataFromCStr("\xA8\x01\x0A"      // optional_nested_enum_extension set to 10
+                   "\x98\x03\x0B"      // repeated_nested_enum_extension set to 11
+                   "\xA2\x03\x01\x0C"  // repeated_foreign_enum_extension set to 12 (packed)
+      );
+  NSError *error = nil;
+
+  TestAllExtensions *msg = [TestAllExtensions parseFromData:data
+                                          extensionRegistry:[self extensionRegistry]
+                                                      error:&error];
+  XCTAssertNil(error);
+
+  XCTAssertFalse([msg hasExtension:[UnittestRoot optionalNestedEnumExtension]]);
+  XCTAssertFalse([msg hasExtension:[UnittestRoot repeatedNestedEnumExtension]]);
+  XCTAssertFalse([msg hasExtension:[UnittestRoot repeatedForeignEnumExtension]]);
+
+  GPBUnknownFieldSet *unknownFields = msg.unknownFields;
+  GPBUnknownField *field =
+      [unknownFields getField:[UnittestRoot optionalNestedEnumExtension].fieldNumber];
+  XCTAssertNotNil(field);
+  XCTAssertEqual(field.varintList.count, 1);
+  XCTAssertEqual([field.varintList valueAtIndex:0], 10);
+  field = [unknownFields getField:[UnittestRoot repeatedNestedEnumExtension].fieldNumber];
+  XCTAssertNotNil(field);
+  XCTAssertEqual(field.varintList.count, 1);
+  XCTAssertEqual([field.varintList valueAtIndex:0], 11);
+  field = [unknownFields getField:[UnittestRoot repeatedForeignEnumExtension].fieldNumber];
+  XCTAssertNotNil(field);
+  XCTAssertEqual(field.varintList.count, 1);
+  XCTAssertEqual([field.varintList valueAtIndex:0], 12);
+
+  // Unknown and known, the known come though an unknown go to unknown fields.
+
+  data = DataFromCStr(
+      "\xA8\x01\x01"              // optional_nested_enum_extension set to 1
+      "\xA8\x01\x0A"              // optional_nested_enum_extension set to 10
+      "\xA8\x01\x02"              // optional_nested_enum_extension set to 2
+      "\x98\x03\x02"              // repeated_nested_enum_extension set to 2
+      "\x98\x03\x0B"              // repeated_nested_enum_extension set to 11
+      "\x98\x03\x03"              // repeated_nested_enum_extension set to 3
+      "\xA2\x03\x03\x04\x0C\x06"  // repeated_foreign_enum_extension set to 4, 12, 6 (packed)
+  );
+  error = nil;
+
+  msg = [TestAllExtensions parseFromData:data
+                       extensionRegistry:[self extensionRegistry]
+                                   error:&error];
+  XCTAssertNil(error);
+
+  XCTAssertTrue([msg hasExtension:[UnittestRoot optionalNestedEnumExtension]]);
+  XCTAssertEqualObjects([msg getExtension:[UnittestRoot optionalNestedEnumExtension]], @2);
+  XCTAssertTrue([msg hasExtension:[UnittestRoot repeatedNestedEnumExtension]]);
+  id expected = @[ @2, @3 ];
+  XCTAssertEqualObjects([msg getExtension:[UnittestRoot repeatedNestedEnumExtension]], expected);
+  XCTAssertTrue([msg hasExtension:[UnittestRoot repeatedForeignEnumExtension]]);
+  expected = @[ @4, @6 ];
+  XCTAssertEqualObjects([msg getExtension:[UnittestRoot repeatedForeignEnumExtension]], expected);
+
+  unknownFields = msg.unknownFields;
+  field = [unknownFields getField:[UnittestRoot optionalNestedEnumExtension].fieldNumber];
+  XCTAssertNotNil(field);
+  XCTAssertEqual(field.varintList.count, 1);
+  XCTAssertEqual([field.varintList valueAtIndex:0], 10);
+  field = [unknownFields getField:[UnittestRoot repeatedNestedEnumExtension].fieldNumber];
+  XCTAssertNotNil(field);
+  XCTAssertEqual(field.varintList.count, 1);
+  XCTAssertEqual([field.varintList valueAtIndex:0], 11);
+  field = [unknownFields getField:[UnittestRoot repeatedForeignEnumExtension].fieldNumber];
+  XCTAssertNotNil(field);
+  XCTAssertEqual(field.varintList.count, 1);
+  XCTAssertEqual([field.varintList valueAtIndex:0], 12);
 }
 
 - (void)testDefaultingExtensionMessages {

@@ -1,32 +1,9 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 #include "google/protobuf/json/internal/parser.h"
 
@@ -40,10 +17,10 @@
 #include <utility>
 
 #include "google/protobuf/type.pb.h"
-#include "google/protobuf/descriptor.h"
-#include "google/protobuf/dynamic_message.h"
-#include "google/protobuf/message.h"
 #include "absl/base/attributes.h"
+#include "absl/container/flat_hash_set.h"
+#include "absl/log/absl_check.h"
+#include "absl/log/absl_log.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/ascii.h"
@@ -55,12 +32,15 @@
 #include "absl/strings/string_view.h"
 #include "absl/types/optional.h"
 #include "absl/types/span.h"
+#include "google/protobuf/descriptor.h"
+#include "google/protobuf/dynamic_message.h"
 #include "google/protobuf/io/zero_copy_sink.h"
 #include "google/protobuf/io/zero_copy_stream.h"
 #include "google/protobuf/io/zero_copy_stream_impl_lite.h"
 #include "google/protobuf/json/internal/descriptor_traits.h"
 #include "google/protobuf/json/internal/lexer.h"
 #include "google/protobuf/json/internal/parser_traits.h"
+#include "google/protobuf/message.h"
 #include "google/protobuf/util/type_resolver.h"
 #include "google/protobuf/stubs/status_macros.h"
 
@@ -418,7 +398,7 @@ absl::Status ParseSingular(JsonLexer& lex, Field<Traits> field,
               field, msg,
               [&](const Desc<Traits>& type, Msg<Traits>& msg) -> absl::Status {
                 auto field = Traits::FieldByNumber(type, 1);
-                GOOGLE_DCHECK(field.has_value());
+                ABSL_DCHECK(field.has_value());
                 RETURN_IF_ERROR(lex.Expect("null"));
                 Traits::SetEnum(Traits::MustHaveField(type, 1), msg, 0);
                 return absl::OkStatus();
@@ -525,7 +505,7 @@ absl::Status ParseSingular(JsonLexer& lex, Field<Traits> field,
       absl::StatusOr<absl::optional<int32_t>> x = ParseEnum<Traits>(lex, field);
       RETURN_IF_ERROR(x.status());
 
-      if (x->has_value() || !Traits::IsOptional(field)) {
+      if (x->has_value() || Traits::IsImplicitPresence(field)) {
         Traits::SetEnum(field, msg, x->value_or(0));
       }
       break;
@@ -743,7 +723,7 @@ absl::Status ParseMap(JsonLexer& lex, Field<Traits> field, Msg<Traits>& msg) {
 
 absl::optional<uint32_t> TakeTimeDigitsWithSuffixAndAdvance(
     absl::string_view& data, int max_digits, absl::string_view end) {
-  GOOGLE_DCHECK_LE(max_digits, 9);
+  ABSL_DCHECK_LE(max_digits, 9);
 
   uint32_t val = 0;
   int limit = max_digits;
@@ -1039,7 +1019,7 @@ absl::Status ParseAny(JsonLexer& lex, const Desc<Traits>& desc,
         });
   } else {
     // Empty {} is accepted in legacy mode.
-    GOOGLE_DCHECK(lex.options().allow_legacy_syntax);
+    ABSL_DCHECK(lex.options().allow_legacy_syntax);
     RETURN_IF_ERROR(any_lex.VisitObject([&](auto&) {
       return mark.loc.Invalid(
           "in legacy mode, missing @type in Any is only allowed for an empty "
@@ -1180,6 +1160,19 @@ absl::Status ParseField(JsonLexer& lex, const Desc<Traits>& desc,
   if (absl::StartsWith(name, "[") && absl::EndsWith(name, "]")) {
     absl::string_view extn_name = name.substr(1, name.size() - 2);
     field = Traits::ExtensionByName(desc, extn_name);
+
+    if (field.has_value()) {
+      // The check for whether this is an invalid field occurs below, since it
+      // is combined for both extension and non-extension fields.
+      auto correct_type_name = Traits::TypeName(desc);
+      if (Traits::TypeName(Traits::ContainingType(*field)) !=
+          correct_type_name) {
+        return lex.Invalid(absl::StrFormat(
+            "'%s' is a known extension name, but is not an extension "
+            "of '%s' as expected",
+            extn_name, correct_type_name));
+      }
+    }
   } else {
     field = Traits::FieldByName(desc, name);
   }
@@ -1288,7 +1281,9 @@ absl::Status ParseMessage(JsonLexer& lex, const Desc<Traits>& desc,
 absl::Status JsonStringToMessage(absl::string_view input, Message* message,
                                  json_internal::ParseOptions options) {
   MessagePath path(message->GetDescriptor()->full_name());
-  PROTOBUF_DLOG(INFO) << "json2/input: " << absl::CHexEscape(input);
+  if (PROTOBUF_DEBUG) {
+    ABSL_DLOG(INFO) << "json2/input: " << absl::CHexEscape(input);
+  }
   io::ArrayInputStream in(input.data(), input.size());
   JsonLexer lex(&in, options, &path);
 
@@ -1301,9 +1296,10 @@ absl::Status JsonStringToMessage(absl::string_view input, Message* message,
         "extraneous characters after end of JSON object");
   }
 
-  PROTOBUF_DLOG(INFO) << "json2/status: " << s;
-  PROTOBUF_DLOG(INFO) << "json2/output: " << message->DebugString();
-
+  if (PROTOBUF_DEBUG) {
+    ABSL_DLOG(INFO) << "json2/status: " << s;
+    ABSL_DLOG(INFO) << "json2/output: " << message->DebugString();
+  }
   return s;
 }
 
@@ -1313,14 +1309,14 @@ absl::Status JsonToBinaryStream(google::protobuf::util::TypeResolver* resolver,
                                 io::ZeroCopyOutputStream* binary_output,
                                 json_internal::ParseOptions options) {
   // NOTE: Most of the contortions in this function are to allow for capture of
-  // input and output of the parser in GOOGLE_DLOG mode. Destruction order is very
+  // input and output of the parser in ABSL_DLOG mode. Destruction order is very
   // critical in this function, because io::ZeroCopy*Stream types usually only
   // flush on destruction.
 
-  // For GOOGLE_DLOG, we would like to print out the input and output, which requires
-  // buffering both instead of doing "zero copy". This block, and the one at
-  // the end of the function, set up and tear down interception of the input
-  // and output streams.
+  // For ABSL_DLOG, we would like to print out the input and output, which
+  // requires buffering both instead of doing "zero copy". This block, and the
+  // one at the end of the function, set up and tear down interception of the
+  // input and output streams.
   std::string copy;
   std::string out;
   absl::optional<io::ArrayInputStream> tee_input;
@@ -1334,9 +1330,8 @@ absl::Status JsonToBinaryStream(google::protobuf::util::TypeResolver* resolver,
     }
     tee_input.emplace(copy.data(), copy.size());
     tee_output.emplace(&out);
+    ABSL_DLOG(INFO) << "json2/input: " << absl::CHexEscape(copy);
   }
-
-  PROTOBUF_DLOG(INFO) << "json2/input: " << absl::CHexEscape(copy);
 
   // This scope forces the CodedOutputStream inside of `msg` to flush before we
   // possibly handle logging the binary protobuf output.
@@ -1363,10 +1358,10 @@ absl::Status JsonToBinaryStream(google::protobuf::util::TypeResolver* resolver,
     tee_output.reset();  // Flush the output stream.
     io::zc_sink_internal::ZeroCopyStreamByteSink(binary_output)
         .Append(out.data(), out.size());
+    ABSL_DLOG(INFO) << "json2/status: " << s;
+    ABSL_DLOG(INFO) << "json2/output: " << absl::BytesToHexString(out);
   }
 
-  PROTOBUF_DLOG(INFO) << "json2/status: " << s;
-  PROTOBUF_DLOG(INFO) << "json2/output: " << absl::BytesToHexString(out);
   return s;
 }
 }  // namespace json_internal

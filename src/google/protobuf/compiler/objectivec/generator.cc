@@ -1,48 +1,32 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 #include "google/protobuf/compiler/objectivec/generator.h"
 
+#include <cstddef>
+#include <cstdlib>
 #include <fstream>
-#include <iostream>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "absl/container/flat_hash_set.h"
+#include "absl/memory/memory.h"
 #include "absl/strings/ascii.h"
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_split.h"
+#include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
+#include "google/protobuf/compiler/code_generator.h"
 #include "google/protobuf/compiler/objectivec/file.h"
 #include "google/protobuf/compiler/objectivec/names.h"
+#include "google/protobuf/compiler/objectivec/options.h"
+#include "google/protobuf/descriptor.h"
 #include "google/protobuf/io/printer.h"
 #include "google/protobuf/io/zero_copy_stream.h"
 
@@ -54,8 +38,9 @@ namespace objectivec {
 namespace {
 
 // Convert a string with "yes"/"no" (case insensitive) to a boolean, returning
-// true/false for if the input string was a valid value. If the input string is
-// invalid, `result` is unchanged.
+// true/false for if the input string was a valid value. The empty string is
+// also treated as a true value. If the input string is invalid, `result` is
+// unchanged.
 bool StringToBool(const std::string& value, bool* result) {
   std::string upper_value(value);
   absl::AsciiStrToUpper(&upper_value);
@@ -63,12 +48,16 @@ bool StringToBool(const std::string& value, bool* result) {
     *result = false;
     return true;
   }
-  if (upper_value == "YES") {
+  if (upper_value == "YES" || upper_value.empty()) {
     *result = true;
     return true;
   }
 
   return false;
+}
+
+std::string NumberedObjCMFileName(absl::string_view basename, int number) {
+  return absl::StrCat(basename, ".out/", number, ".pbobjc.m");
 }
 
 }  // namespace
@@ -139,8 +128,9 @@ bool ObjectiveCGenerator::GenerateAll(
       // Default is "no".
       if (!StringToBool(options[i].second,
                         &validation_options.prefixes_must_be_registered)) {
-        *error = "error: Unknown value for prefixes_must_be_registered: " +
-                 options[i].second;
+        *error = absl::StrCat(
+            "error: Unknown value for prefixes_must_be_registered: ",
+            options[i].second);
         return false;
       }
     } else if (options[i].first == "require_prefixes") {
@@ -152,8 +142,8 @@ bool ObjectiveCGenerator::GenerateAll(
       // Default is "no".
       if (!StringToBool(options[i].second,
                         &validation_options.require_prefixes)) {
-        *error =
-            "error: Unknown value for require_prefixes: " + options[i].second;
+        *error = absl::StrCat("error: Unknown value for require_prefixes: ",
+                              options[i].second);
         return false;
       }
     } else if (options[i].first == "generate_for_named_framework") {
@@ -223,7 +213,8 @@ bool ObjectiveCGenerator::GenerateAll(
       if (StringToBool(options[i].second, &value)) {
         SetUseProtoPackageAsDefaultPrefix(value);
       } else {
-        *error = "error: Unknown use_package_as_prefix: " + options[i].second;
+        *error = absl::StrCat("error: Unknown use_package_as_prefix: ",
+                              options[i].second);
         return false;
       }
     } else if (options[i].first == "proto_package_prefix_exceptions_path") {
@@ -245,14 +236,80 @@ bool ObjectiveCGenerator::GenerateAll(
     } else if (options[i].first == "headers_use_forward_declarations") {
       if (!StringToBool(options[i].second,
                         &generation_options.headers_use_forward_declarations)) {
-        *error = "error: Unknown value for headers_use_forward_declarations: " +
-                 options[i].second;
+        *error = absl::StrCat(
+            "error: Unknown value for headers_use_forward_declarations: ",
+            options[i].second);
+        return false;
+      }
+    } else if (options[i].first == "strip_custom_options") {
+      // Controls if extensions that define custom options are included the
+      // generated code. Since ObjC protos does not capture these descriptor
+      // options, there normally isn't a need for these extensions. Docs on
+      // custom options:
+      //   https://protobuf.dev/programming-guides/proto2/#customoptions
+      if (!StringToBool(options[i].second,
+                        &generation_options.strip_custom_options)) {
+        *error = absl::StrCat("error: Unknown value for strip_custom_options: ",
+                              options[i].second);
+        return false;
+      }
+    } else if (options[i].first == "generate_minimal_imports") {
+      // Controls if minimal imports should be generated from a files imports.
+      // Since custom options require imports, they current cause generated
+      // imports even though there is nothing captured in the generated code,
+      // this provides smaller imports only for the things referenced. This
+      // could break code in complex cases where code uses types via long
+      // import chains with public imports mixed through the way, as things
+      // that aren't really needed for the local usages could be pruned.
+      if (!StringToBool(options[i].second,
+                        &generation_options.generate_minimal_imports)) {
+        *error =
+            absl::StrCat("error: Unknown value for generate_minimal_imports: ",
+                         options[i].second);
+        return false;
+      }
+    } else if (options[i].first == "experimental_multi_source_generation") {
+      // This is an experimental option, and could be removed or change at any
+      // time; it is not documented in the README.md for that reason.
+      //
+      // Enables a mode where each ObjC class (messages and roots) generates to
+      // a unique .m file; this is to explore impacts on code size when not
+      // compiling/linking with `-ObjC` as then only linker visible needs should
+      // be pulled into the builds.
+      if (!StringToBool(
+              options[i].second,
+              &generation_options.experimental_multi_source_generation)) {
+        *error = absl::StrCat(
+            "error: Unknown value for experimental_multi_source_generation: ",
+            options[i].second);
+        return false;
+      }
+    } else if (options[i].first == "experimental_strip_nonfunctional_codegen") {
+      if (!StringToBool(
+              options[i].second,
+              &generation_options.experimental_strip_nonfunctional_codegen)) {
+        *error = absl::StrCat(
+            "error: Unknown value for "
+            "experimental_strip_nonfunctional_codegen: ",
+            options[i].second);
         return false;
       }
     } else {
-      *error = "error: Unknown generator option: " + options[i].first;
+      *error =
+          absl::StrCat("error: Unknown generator option: ", options[i].first);
       return false;
     }
+  }
+
+  // Multi source generation forces:
+  // - off the use of fwd decls in favor of imports
+  // - on the minimal imports support
+  if (generation_options.experimental_multi_source_generation) {
+    generation_options.headers_use_forward_declarations = false;
+    generation_options.generate_minimal_imports = true;
+  }
+  if (generation_options.experimental_strip_nonfunctional_codegen) {
+    generation_options.generate_minimal_imports = true;
   }
 
   // -----------------------------------------------------------------
@@ -282,28 +339,84 @@ bool ObjectiveCGenerator::GenerateAll(
     return false;
   }
 
-  FileGenerator::CommonState state;
-  for (int i = 0; i < files.size(); i++) {
-    const FileDescriptor* file = files[i];
-    FileGenerator file_generator(file, generation_options, state);
+  FileGenerator::CommonState state(!generation_options.strip_custom_options);
+  for (const auto& file : files) {
+    const FileGenerator file_generator(file, generation_options, state);
     std::string filepath = FilePath(file);
 
     // Generate header.
     {
-      std::unique_ptr<io::ZeroCopyOutputStream> output(
-          context->Open(filepath + ".pbobjc.h"));
-      io::Printer printer(output.get(), '$');
+      auto output =
+          absl::WrapUnique(context->Open(absl::StrCat(filepath, ".pbobjc.h")));
+      io::Printer printer(output.get());
       file_generator.GenerateHeader(&printer);
+      if (printer.failed()) {
+        *error = absl::StrCat("error: internal error generating a header: ",
+                              file->name());
+        return false;
+      }
     }
 
-    // Generate m file.
+    // Generate m file(s).
     if (!headers_only && skip_impls.count(file->name()) == 0) {
-      std::unique_ptr<io::ZeroCopyOutputStream> output(
-          context->Open(filepath + ".pbobjc.m"));
-      io::Printer printer(output.get(), '$');
-      file_generator.GenerateSource(&printer);
-    }
-  }
+      if (generation_options.experimental_multi_source_generation) {
+        int file_number = 0;
+
+        // Generate the Root and FileDescriptor (if needed).
+        {
+          std::unique_ptr<io::ZeroCopyOutputStream> output(
+              context->Open(NumberedObjCMFileName(filepath, file_number++)));
+          io::Printer printer(output.get());
+          file_generator.GenerateGlobalSource(&printer);
+          if (printer.failed()) {
+            *error = absl::StrCat(
+                "error: internal error generating an implementation:",
+                file->name());
+            return false;
+          }
+        }
+
+        // Enums only generate C functions, so they can all go in one file as
+        // dead stripping anything not used.
+        if (file_generator.NumEnums() > 0) {
+          std::unique_ptr<io::ZeroCopyOutputStream> output(
+              context->Open(NumberedObjCMFileName(filepath, file_number++)));
+          io::Printer printer(output.get());
+          file_generator.GenerateSourceForEnums(&printer);
+          if (printer.failed()) {
+            *error = absl::StrCat(
+                "error: internal error generating an enum implementation(s):",
+                file->name());
+            return false;
+          }
+        }
+
+        for (int i = 0; i < file_generator.NumMessages(); ++i) {
+          std::unique_ptr<io::ZeroCopyOutputStream> output(
+              context->Open(NumberedObjCMFileName(filepath, file_number++)));
+          io::Printer printer(output.get());
+          file_generator.GenerateSourceForMessage(i, &printer);
+          if (printer.failed()) {
+            *error = absl::StrCat(
+                "error: internal error generating an message implementation:",
+                file->name(), "::", i);
+            return false;
+          }
+        }
+      } else {
+        auto output = absl::WrapUnique(
+            context->Open(absl::StrCat(filepath, ".pbobjc.m")));
+        io::Printer printer(output.get());
+        file_generator.GenerateSource(&printer);
+        if (printer.failed()) {
+          *error = absl::StrCat(
+              "error: internal error generating an implementation:",
+              file->name());
+          return false;
+        }
+      }
+    }  // if (!headers_only && skip_impls.count(file->name()) == 0)
+  }    // for(file : files)
 
   return true;
 }

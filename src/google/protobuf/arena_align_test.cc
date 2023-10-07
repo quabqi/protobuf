@@ -1,32 +1,9 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 #include "google/protobuf/arena_align.h"
 
@@ -67,6 +44,16 @@ TEST(ArenaAlignDefault, Ceil) {
   EXPECT_THAT(align_default.Ceil(16), Eq(16));
 }
 
+TEST(ArenaAlignDefault, Padded) {
+  auto align_default = ArenaAlignDefault();
+  EXPECT_THAT(align_default.Padded(0), Eq(0));
+  EXPECT_THAT(align_default.Padded(8), Eq(8));
+  EXPECT_THAT(align_default.Padded(64), Eq(64));
+#if GTEST_HAS_DEATH_TEST
+  EXPECT_DEBUG_DEATH(align_default.Padded(1), ".*");
+#endif  // GTEST_HAS_DEATH_TEST
+}
+
 TEST(ArenaAlignDefault, CeilPtr) {
   alignas(8) char p[17] = {0};
   auto align_default = ArenaAlignDefault();
@@ -85,13 +72,13 @@ TEST(ArenaAlignDefault, CheckAligned) {
   EXPECT_THAT(align_default.CheckAligned(p + 0), Eq(p + 0));
   EXPECT_THAT(align_default.CheckAligned(p + 8), Eq(p + 8));
   EXPECT_THAT(align_default.CheckAligned(p + 16), Eq(p + 16));
-#ifdef PROTOBUF_HAS_DEATH_TEST
+#if GTEST_HAS_DEATH_TEST
   EXPECT_DEBUG_DEATH(align_default.CheckAligned(p + 1), ".*");
   EXPECT_DEBUG_DEATH(align_default.CheckAligned(p + 7), ".*");
   EXPECT_DEBUG_DEATH(align_default.CheckAligned(p + 9), ".*");
   EXPECT_DEBUG_DEATH(align_default.CheckAligned(p + 15), ".*");
   EXPECT_DEBUG_DEATH(align_default.CheckAligned(p + 17), ".*");
-#endif  // PROTOBUF_HAS_DEATH_TEST
+#endif  // GTEST_HAS_DEATH_TEST
 }
 
 TEST(ArenaAlignDefault, CeilDefaultAligned) {
@@ -100,13 +87,13 @@ TEST(ArenaAlignDefault, CeilDefaultAligned) {
   EXPECT_THAT(align_default.CeilDefaultAligned(p + 0), Eq(p + 0));
   EXPECT_THAT(align_default.CeilDefaultAligned(p + 8), Eq(p + 8));
   EXPECT_THAT(align_default.CeilDefaultAligned(p + 16), Eq(p + 16));
-#ifdef PROTOBUF_HAS_DEATH_TEST
+#if GTEST_HAS_DEATH_TEST
   EXPECT_DEBUG_DEATH(align_default.CeilDefaultAligned(p + 1), ".*");
   EXPECT_DEBUG_DEATH(align_default.CeilDefaultAligned(p + 7), ".*");
   EXPECT_DEBUG_DEATH(align_default.CeilDefaultAligned(p + 9), ".*");
   EXPECT_DEBUG_DEATH(align_default.CeilDefaultAligned(p + 15), ".*");
   EXPECT_DEBUG_DEATH(align_default.CeilDefaultAligned(p + 17), ".*");
-#endif  // PROTOBUF_HAS_DEATH_TEST
+#endif  // GTEST_HAS_DEATH_TEST
 }
 
 TEST(ArenaAlignDefault, IsAligned) {
@@ -147,6 +134,18 @@ TEST(ArenaAlign, Ceil) {
   EXPECT_THAT(align_64.Ceil(128), Eq(128));
 }
 
+TEST(ArenaAlign, Padded) {
+  auto align_64 = ArenaAlignAs(64);
+  EXPECT_THAT(align_64.Padded(64), Eq(64 + 64 - ArenaAlignDefault::align));
+  EXPECT_THAT(align_64.Padded(128), Eq(128 + 64 - ArenaAlignDefault::align));
+#if GTEST_HAS_DEATH_TEST
+  // TODO: there are direct callers of AllocateAligned() that violate
+  // `size` being a multiple of `align`: that should be an error / assert.
+  //  EXPECT_DEBUG_DEATH(align_64.Padded(16), ".*");
+  EXPECT_DEBUG_DEATH(ArenaAlignAs(2).Padded(8), ".*");
+#endif  // GTEST_HAS_DEATH_TEST
+}
+
 TEST(ArenaAlign, CeilPtr) {
   alignas(64) char p[129] = {0};
   auto align_64 = ArenaAlignAs(64);
@@ -165,7 +164,7 @@ TEST(ArenaAlign, CheckAligned) {
   EXPECT_THAT(align_64.CheckAligned(p + 0), Eq(p));
   EXPECT_THAT(align_64.CheckAligned(p + 64), Eq(p + 64));
   EXPECT_THAT(align_64.CheckAligned(p + 128), Eq(p + 128));
-#ifdef PROTOBUF_HAS_DEATH_TEST
+#if GTEST_HAS_DEATH_TEST
   EXPECT_DEBUG_DEATH(align_64.CheckAligned(p + 1), ".*");
   EXPECT_DEBUG_DEATH(align_64.CheckAligned(p + 7), ".*");
   EXPECT_DEBUG_DEATH(align_64.CheckAligned(p + 8), ".*");
@@ -175,7 +174,7 @@ TEST(ArenaAlign, CheckAligned) {
   EXPECT_DEBUG_DEATH(align_64.CheckAligned(p + 72), ".*");
   EXPECT_DEBUG_DEATH(align_64.CheckAligned(p + 120), ".*");
   EXPECT_DEBUG_DEATH(align_64.CheckAligned(p + 129), ".*");
-#endif  // PROTOBUF_HAS_DEATH_TEST
+#endif  // GTEST_HAS_DEATH_TEST
 }
 
 TEST(ArenaAlign, CeilDefaultAligned) {
@@ -188,14 +187,14 @@ TEST(ArenaAlign, CeilDefaultAligned) {
   EXPECT_THAT(align_64.CeilDefaultAligned(p + 72), Eq(p + 128));
   EXPECT_THAT(align_64.CeilDefaultAligned(p + 120), Eq(p + 128));
   EXPECT_THAT(align_64.CeilDefaultAligned(p + 128), Eq(p + 128));
-#ifdef PROTOBUF_HAS_DEATH_TEST
+#if GTEST_HAS_DEATH_TEST
   EXPECT_DEBUG_DEATH(align_64.CeilDefaultAligned(p + 1), ".*");
   EXPECT_DEBUG_DEATH(align_64.CeilDefaultAligned(p + 7), ".*");
   EXPECT_DEBUG_DEATH(align_64.CeilDefaultAligned(p + 63), ".*");
   EXPECT_DEBUG_DEATH(align_64.CeilDefaultAligned(p + 65), ".*");
   EXPECT_DEBUG_DEATH(align_64.CeilDefaultAligned(p + 127), ".*");
   EXPECT_DEBUG_DEATH(align_64.CeilDefaultAligned(p + 129), ".*");
-#endif  // PROTOBUF_HAS_DEATH_TEST
+#endif  // GTEST_HAS_DEATH_TEST
 }
 
 TEST(ArenaAlign, IsAligned) {

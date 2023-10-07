@@ -1,32 +1,9 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2008 Google Inc.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 // Author: jschorr@google.com (Joseph Schorr)
 //  Based on original Protocol Buffers design by
@@ -42,15 +19,16 @@
 #include <memory>
 #include <string>
 
-#include "google/protobuf/stubs/logging.h"
-#include "google/protobuf/stubs/common.h"
 #include "google/protobuf/testing/file.h"
 #include "google/protobuf/testing/file.h"
 #include "google/protobuf/any.pb.h"
 #include <gmock/gmock.h>
 #include "google/protobuf/testing/googletest.h"
 #include <gtest/gtest.h>
-#include "google/protobuf/stubs/logging.h"
+#include "absl/log/absl_check.h"
+#include "absl/log/die_if_null.h"
+#include "absl/log/scoped_mock_log.h"
+#include "absl/strings/cord.h"
 #include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
@@ -59,6 +37,7 @@
 #include "google/protobuf/io/tokenizer.h"
 #include "google/protobuf/io/zero_copy_stream_impl.h"
 #include "google/protobuf/map_unittest.pb.h"
+#include "google/protobuf/message.h"
 #include "google/protobuf/test_util.h"
 #include "google/protobuf/test_util2.h"
 #include "google/protobuf/unittest.pb.h"
@@ -81,21 +60,21 @@ using ::testing::AllOf;
 using ::testing::HasSubstr;
 
 // A basic string with different escapable characters for testing.
-const std::string kEscapeTestString =
+constexpr absl::string_view kEscapeTestString =
     "\"A string with ' characters \n and \r newlines and \t tabs and \001 "
     "slashes \\ and  multiple   spaces";
 
 // A representation of the above string with all the characters escaped.
-const std::string kEscapeTestStringEscaped =
+constexpr absl::string_view kEscapeTestStringEscaped =
     "\"\\\"A string with \\' characters \\n and \\r newlines "
     "and \\t tabs and \\001 slashes \\\\ and  multiple   spaces\"";
 
 class TextFormatTest : public testing::Test {
  public:
   static void SetUpTestSuite() {
-    GOOGLE_CHECK_OK(File::GetContents(
+    ABSL_CHECK_OK(File::GetContents(
         TestUtil::GetTestDataPath(
-            "third_party/protobuf/"
+            "google/protobuf/"
             "testdata/text_format_unittest_data_oneof_implemented.txt"),
         &static_proto_text_format_, true));
   }
@@ -115,8 +94,8 @@ std::string TextFormatTest::static_proto_text_format_;
 class TextFormatExtensionsTest : public testing::Test {
  public:
   static void SetUpTestSuite() {
-    GOOGLE_CHECK_OK(File::GetContents(
-        TestUtil::GetTestDataPath("third_party/protobuf/testdata/"
+    ABSL_CHECK_OK(File::GetContents(
+        TestUtil::GetTestDataPath("google/protobuf/testdata/"
                                   "text_format_unittest_extensions_data.txt"),
         &static_proto_text_format_, true));
   }
@@ -161,6 +140,134 @@ TEST_F(TextFormatTest, ShortDebugString) {
                          "optional_foreign_message { }"));
 }
 
+
+TEST_F(TextFormatTest, ShortFormat) {
+  unittest::RedactedFields proto;
+  unittest::TestNestedMessageRedaction redacted_nested_proto;
+  unittest::TestNestedMessageRedaction unredacted_nested_proto;
+  redacted_nested_proto.set_optional_unredacted_nested_string("hello");
+  unredacted_nested_proto.set_optional_unredacted_nested_string("world");
+  proto.set_optional_redacted_string("foo");
+  proto.set_optional_unredacted_string("bar");
+  proto.add_repeated_redacted_string("1");
+  proto.add_repeated_redacted_string("2");
+  proto.add_repeated_unredacted_string("3");
+  proto.add_repeated_unredacted_string("4");
+  *proto.mutable_optional_redacted_message() = redacted_nested_proto;
+  *proto.mutable_optional_unredacted_message() = unredacted_nested_proto;
+  unittest::TestNestedMessageRedaction* redacted_message_1 =
+      proto.add_repeated_redacted_message();
+  unittest::TestNestedMessageRedaction* redacted_message_2 =
+      proto.add_repeated_redacted_message();
+  unittest::TestNestedMessageRedaction* unredacted_message_1 =
+      proto.add_repeated_unredacted_message();
+  unittest::TestNestedMessageRedaction* unredacted_message_2 =
+      proto.add_repeated_unredacted_message();
+  redacted_message_1->set_optional_unredacted_nested_string("5");
+  redacted_message_2->set_optional_unredacted_nested_string("6");
+  unredacted_message_1->set_optional_unredacted_nested_string("7");
+  unredacted_message_2->set_optional_unredacted_nested_string("8");
+  (*proto.mutable_map_redacted_string())["abc"] = "def";
+  (*proto.mutable_map_unredacted_string())["ghi"] = "jkl";
+
+  std::string value_replacement = "\\[REDACTED\\]";
+  EXPECT_THAT(google::protobuf::ShortFormat(proto),
+              testing::MatchesRegex(
+                  "optional_redacted_string: " +
+                  value_replacement +
+                  " "
+                  "optional_unredacted_string: \"bar\" "
+                  "repeated_redacted_string: " +
+                  value_replacement +
+                  " "
+                  "repeated_redacted_string: " +
+                  value_replacement +
+                  " "
+                  "repeated_unredacted_string: \"3\" "
+                  "repeated_unredacted_string: \"4\" "
+                  "optional_redacted_message: " +
+                  value_replacement +
+                  " "
+                  "optional_unredacted_message \\{ "
+                  "optional_unredacted_nested_string: \"world\" \\} "
+                  "repeated_redacted_message: " +
+                  value_replacement +
+                  " "
+                  "repeated_unredacted_message "
+                  "\\{ optional_unredacted_nested_string: \"7\" \\} "
+                  "repeated_unredacted_message "
+                  "\\{ optional_unredacted_nested_string: \"8\" \\} "
+                  "map_redacted_string: " +
+                  value_replacement +
+                  " "
+                  "map_unredacted_string \\{ key: \"ghi\" value: \"jkl\" \\}"));
+}
+
+TEST_F(TextFormatTest, Utf8Format) {
+  unittest::RedactedFields proto;
+  unittest::TestNestedMessageRedaction redacted_nested_proto;
+  unittest::TestNestedMessageRedaction unredacted_nested_proto;
+  redacted_nested_proto.set_optional_unredacted_nested_string(
+      "\350\260\267\346\255\214");
+  unredacted_nested_proto.set_optional_unredacted_nested_string(
+      "\350\260\267\346\255\214");
+  proto.set_optional_redacted_string("foo");
+  proto.set_optional_unredacted_string("bar");
+  proto.add_repeated_redacted_string("1");
+  proto.add_repeated_redacted_string("2");
+  proto.add_repeated_unredacted_string("3");
+  proto.add_repeated_unredacted_string("4");
+  *proto.mutable_optional_redacted_message() = redacted_nested_proto;
+  *proto.mutable_optional_unredacted_message() = unredacted_nested_proto;
+  unittest::TestNestedMessageRedaction* redacted_message_1 =
+      proto.add_repeated_redacted_message();
+  unittest::TestNestedMessageRedaction* redacted_message_2 =
+      proto.add_repeated_redacted_message();
+  unittest::TestNestedMessageRedaction* unredacted_message_1 =
+      proto.add_repeated_unredacted_message();
+  unittest::TestNestedMessageRedaction* unredacted_message_2 =
+      proto.add_repeated_unredacted_message();
+  redacted_message_1->set_optional_unredacted_nested_string("5");
+  redacted_message_2->set_optional_unredacted_nested_string("6");
+  unredacted_message_1->set_optional_unredacted_nested_string("7");
+  unredacted_message_2->set_optional_unredacted_nested_string("8");
+  (*proto.mutable_map_redacted_string())["abc"] = "def";
+  (*proto.mutable_map_unredacted_string())["ghi"] = "jkl";
+
+  std::string value_replacement = "\\[REDACTED\\]";
+  EXPECT_THAT(google::protobuf::Utf8Format(proto),
+              testing::MatchesRegex(
+                  "optional_redacted_string: " +
+                  value_replacement +
+                  "\n"
+                  "optional_unredacted_string: \"bar\"\n"
+                  "repeated_redacted_string: " +
+                  value_replacement +
+                  "\n"
+                  "repeated_redacted_string: " +
+                  value_replacement +
+                  "\n"
+                  "repeated_unredacted_string: \"3\"\n"
+                  "repeated_unredacted_string: \"4\"\n"
+                  "optional_redacted_message: " +
+                  value_replacement +
+                  "\n"
+                  "optional_unredacted_message \\{\n  "
+                  "optional_unredacted_nested_string: "
+                  "\"\xE8\xB0\xB7\xE6\xAD\x8C\"\n\\}\n"
+                  "repeated_redacted_message: " +
+                  value_replacement +
+                  "\n"
+                  "repeated_unredacted_message \\{\n  "
+                  "optional_unredacted_nested_string: \"7\"\n\\}\n"
+                  "repeated_unredacted_message \\{\n  "
+                  "optional_unredacted_nested_string: \"8\"\n\\}\n"
+                  "map_redacted_string: " +
+                  value_replacement +
+                  "\n"
+                  "map_unredacted_string \\{\n  "
+                  "key: \"ghi\"\n  value: \"jkl\"\n\\}\n"));
+}
 
 TEST_F(TextFormatTest, ShortPrimitiveRepeateds) {
   proto_.set_optional_int32(123);
@@ -295,6 +402,22 @@ TEST_F(TextFormatTest, PrintUnknownFields) {
                          "8: 2\n"
                          "8: 3\n"),
             message.DebugString());
+}
+
+TEST_F(TextFormatTest, PrintUnknownFieldsDeepestStackWorks) {
+  // Test printing of unknown fields in a message.
+
+  unittest::TestEmptyMessage message;
+  UnknownFieldSet* unknown_fields = message.mutable_unknown_fields();
+
+  for (int i = 0; i < 200; ++i) {
+    unknown_fields = unknown_fields->AddGroup(1);
+  }
+
+  unknown_fields->AddVarint(2, 100);
+
+  std::string str;
+  EXPECT_TRUE(TextFormat::PrintToString(message, &str));
 }
 
 TEST_F(TextFormatTest, PrintUnknownFieldsHidden) {
@@ -780,15 +903,24 @@ class CustomNestedMessagePrinter : public TextFormat::MessagePrinter {
   ~CustomNestedMessagePrinter() override {}
   void Print(const Message& message, bool single_line_mode,
              TextFormat::BaseTextGenerator* generator) const override {
-    generator->PrintLiteral("custom");
+    generator->PrintLiteral("// custom\n");
+    if (printer_ != nullptr) {
+      printer_->PrintMessage(message, generator);
+    }
   }
+
+  void SetPrinter(TextFormat::Printer* printer) { printer_ = printer; }
+
+ private:
+  TextFormat::Printer* printer_ = nullptr;
 };
 
 TEST_F(TextFormatTest, CustomMessagePrinter) {
   TextFormat::Printer printer;
+  auto* custom_printer = new CustomNestedMessagePrinter;
   printer.RegisterMessagePrinter(
       unittest::TestAllTypes::NestedMessage::default_instance().descriptor(),
-      new CustomNestedMessagePrinter);
+      custom_printer);
 
   unittest::TestAllTypes message;
   std::string text;
@@ -797,13 +929,23 @@ TEST_F(TextFormatTest, CustomMessagePrinter) {
 
   message.mutable_optional_nested_message()->set_bb(1);
   EXPECT_TRUE(printer.PrintToString(message, &text));
-  EXPECT_EQ("optional_nested_message {\n  custom}\n", text);
+  EXPECT_EQ("optional_nested_message {\n  // custom\n}\n", text);
+
+  custom_printer->SetPrinter(&printer);
+  EXPECT_TRUE(printer.PrintToString(message, &text));
+  EXPECT_EQ("optional_nested_message {\n  // custom\n  bb: 1\n}\n", text);
 }
 
 TEST_F(TextFormatTest, ParseBasic) {
   io::ArrayInputStream input_stream(proto_text_format_.data(),
                                     proto_text_format_.size());
   TextFormat::Parse(&input_stream, &proto_);
+  TestUtil::ExpectAllFieldsSet(proto_);
+}
+
+TEST_F(TextFormatTest, ParseCordBasic) {
+  absl::Cord cord(proto_text_format_);
+  TextFormat::ParseFromCord(cord, &proto_);
   TestUtil::ExpectAllFieldsSet(proto_);
 }
 
@@ -865,10 +1007,93 @@ TEST_F(TextFormatTest, ParseUnknownEnumFieldProto3) {
   EXPECT_EQ(-2147483648, proto.repeated_nested_enum(3));
 }
 
+TEST_F(TextFormatTest, ErrorOnNoOpFieldsProto3) {
+  proto3_unittest::TestAllTypes proto;
+  TextFormat::Parser parser;
+  parser.ErrorOnNoOpFields(true);
+
+  {
+    const absl::string_view singular_int_parse_string = "optional_int32: 0";
+    EXPECT_TRUE(TextFormat::ParseFromString(singular_int_parse_string, &proto));
+    EXPECT_FALSE(parser.ParseFromString(singular_int_parse_string, &proto));
+  }
+  {
+    const absl::string_view singular_bool_parse_string = "optional_bool: false";
+    EXPECT_TRUE(
+        TextFormat::ParseFromString(singular_bool_parse_string, &proto));
+    EXPECT_FALSE(parser.ParseFromString(singular_bool_parse_string, &proto));
+  }
+  {
+    const absl::string_view singular_string_parse_string =
+        "optional_string: ''";
+    EXPECT_TRUE(
+        TextFormat::ParseFromString(singular_string_parse_string, &proto));
+    EXPECT_FALSE(parser.ParseFromString(singular_string_parse_string, &proto));
+  }
+  {
+    const absl::string_view nested_message_parse_string =
+        "optional_nested_message { bb: 0 } ";
+    EXPECT_TRUE(
+        TextFormat::ParseFromString(nested_message_parse_string, &proto));
+    EXPECT_FALSE(parser.ParseFromString(nested_message_parse_string, &proto));
+  }
+  {
+    const absl::string_view foreign_message_parse_string =
+        "optional_foreign_message { c: 0 } ";
+    EXPECT_TRUE(
+        TextFormat::ParseFromString(foreign_message_parse_string, &proto));
+    EXPECT_FALSE(parser.ParseFromString(foreign_message_parse_string, &proto));
+  }
+  {
+    const absl::string_view nested_enum_parse_string =
+        "optional_nested_enum: ZERO ";
+    EXPECT_TRUE(TextFormat::ParseFromString(nested_enum_parse_string, &proto));
+    EXPECT_FALSE(parser.ParseFromString(nested_enum_parse_string, &proto));
+  }
+  {
+    const absl::string_view foreign_enum_parse_string =
+        "optional_foreign_enum: FOREIGN_ZERO ";
+    EXPECT_TRUE(TextFormat::ParseFromString(foreign_enum_parse_string, &proto));
+    EXPECT_FALSE(parser.ParseFromString(foreign_enum_parse_string, &proto));
+  }
+  {
+    const absl::string_view string_piece_parse_string =
+        "optional_string_piece: '' ";
+    EXPECT_TRUE(TextFormat::ParseFromString(string_piece_parse_string, &proto));
+    EXPECT_FALSE(parser.ParseFromString(string_piece_parse_string, &proto));
+  }
+  {
+    const absl::string_view cord_parse_string = "optional_cord: '' ";
+    EXPECT_TRUE(TextFormat::ParseFromString(cord_parse_string, &proto));
+    EXPECT_FALSE(parser.ParseFromString(cord_parse_string, &proto));
+  }
+  {
+    // Sanity check that repeated fields work the same.
+    const absl::string_view repeated_int32_parse_string = "repeated_int32: 0 ";
+    EXPECT_TRUE(
+        TextFormat::ParseFromString(repeated_int32_parse_string, &proto));
+    EXPECT_TRUE(parser.ParseFromString(repeated_int32_parse_string, &proto));
+  }
+  {
+    const absl::string_view repeated_bool_parse_string =
+        "repeated_bool: false  ";
+    EXPECT_TRUE(
+        TextFormat::ParseFromString(repeated_bool_parse_string, &proto));
+    EXPECT_TRUE(parser.ParseFromString(repeated_bool_parse_string, &proto));
+  }
+  {
+    const absl::string_view repeated_string_parse_string =
+        "repeated_string: '' ";
+    EXPECT_TRUE(
+        TextFormat::ParseFromString(repeated_string_parse_string, &proto));
+    EXPECT_TRUE(parser.ParseFromString(repeated_string_parse_string, &proto));
+  }
+}
+
 TEST_F(TextFormatTest, ParseStringEscape) {
   // Create a parse string with escaped characters in it.
   std::string parse_string =
-      "optional_string: " + kEscapeTestStringEscaped + "\n";
+      absl::StrCat("optional_string: ", kEscapeTestStringEscaped, "\n");
 
   io::ArrayInputStream input_stream(parse_string.data(), parse_string.size());
   TextFormat::Parse(&input_stream, &proto_);
@@ -964,6 +1189,7 @@ TEST_F(TextFormatTest, ParseShortRepeatedWithTrailingComma) {
   parse_string = "repeated_nested_message: [ { bb: 1 }, ]";
   ASSERT_FALSE(TextFormat::ParseFromString(parse_string, &proto_));
   parse_string = "RepeatedGroup [{ a: 3 },]\n";
+  ASSERT_FALSE(TextFormat::ParseFromString(parse_string, &proto_));
 }
 
 TEST_F(TextFormatTest, ParseShortRepeatedEmpty) {
@@ -1452,13 +1678,14 @@ class TextFormatParserTest : public testing::Test {
     std::string text_;
 
     // implements ErrorCollector -------------------------------------
-    void AddError(int line, int column, const std::string& message) override {
+    void RecordError(int line, int column, absl::string_view message) override {
       absl::SubstituteAndAppend(&text_, "$0:$1: $2\n", line + 1, column + 1,
                                 message);
     }
 
-    void AddWarning(int line, int column, const std::string& message) override {
-      AddError(line, column, "WARNING:" + message);
+    void RecordWarning(int line, int column,
+                       absl::string_view message) override {
+      RecordError(line, column, absl::StrCat("WARNING:", message));
     }
   };
 
@@ -1870,38 +2097,33 @@ TEST_F(TextFormatParserTest, ExplicitDelimiters) {
 }
 
 TEST_F(TextFormatParserTest, PrintErrorsToStderr) {
-  std::vector<std::string> errors;
-
   {
-    ScopedMemoryLog log;
+    absl::ScopedMockLog log(absl::MockLogDefault::kDisallowUnexpected);
+    EXPECT_CALL(
+        log,
+        Log(absl::LogSeverity::kError, testing::_,
+            "Error parsing text-format protobuf_unittest.TestAllTypes: "
+            "1:14: Message type \"protobuf_unittest.TestAllTypes\" has no field "
+            "named \"no_such_field\"."))
+        .Times(1);
+    log.StartCapturingLogs();
     unittest::TestAllTypes proto;
     EXPECT_FALSE(TextFormat::ParseFromString("no_such_field: 1", &proto));
-    errors = log.GetMessages(ERROR);
   }
-
-  ASSERT_EQ(1, errors.size());
-  EXPECT_EQ(
-      "Error parsing text-format protobuf_unittest.TestAllTypes: "
-      "1:14: Message type \"protobuf_unittest.TestAllTypes\" has no field "
-      "named \"no_such_field\".",
-      errors[0]);
 }
 
 TEST_F(TextFormatParserTest, FailsOnTokenizationError) {
-  std::vector<std::string> errors;
-
   {
-    ScopedMemoryLog log;
+    absl::ScopedMockLog log(absl::MockLogDefault::kDisallowUnexpected);
+    EXPECT_CALL(log,
+                Log(absl::LogSeverity::kError, testing::_,
+                    "Error parsing text-format protobuf_unittest.TestAllTypes: "
+                    "1:1: Invalid control characters encountered in text."))
+        .Times(1);
+    log.StartCapturingLogs();
     unittest::TestAllTypes proto;
     EXPECT_FALSE(TextFormat::ParseFromString("\020", &proto));
-    errors = log.GetMessages(ERROR);
   }
-
-  ASSERT_EQ(1, errors.size());
-  EXPECT_EQ(
-      "Error parsing text-format protobuf_unittest.TestAllTypes: "
-      "1:1: Invalid control characters encountered in text.",
-      errors[0]);
 }
 
 TEST_F(TextFormatParserTest, ParseDeprecatedField) {
@@ -2270,6 +2492,7 @@ TEST(TextFormatUnknownFieldTest, TestUnknownExtension) {
   EXPECT_FALSE(parser.ParseFromString("unknown_field: 1", &proto));
 }
 
+
 TEST(TextFormatFloatingPointTest, PreservesNegative0) {
   proto3_unittest::TestAllTypes in_message;
   in_message.set_optional_float(-0.0f);
@@ -2287,6 +2510,7 @@ TEST(TextFormatFloatingPointTest, PreservesNegative0) {
   EXPECT_EQ(std::signbit(in_message.optional_double()),
             std::signbit(out_message.optional_double()));
 }
+
 
 }  // namespace text_format_unittest
 }  // namespace protobuf
