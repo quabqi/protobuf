@@ -21,9 +21,10 @@ namespace {
 
 TEST(EpsCopyInputStreamTest, ZeroSize) {
   upb_EpsCopyInputStream stream;
-  const char* ptr = NULL;
+  const char* ptr = nullptr;
   upb_EpsCopyInputStream_Init(&stream, &ptr, 0, false);
-  EXPECT_TRUE(upb_EpsCopyInputStream_IsDoneWithCallback(&stream, &ptr, NULL));
+  EXPECT_TRUE(
+      upb_EpsCopyInputStream_IsDoneWithCallback(&stream, &ptr, nullptr));
 }
 
 // begin:google_only
@@ -33,7 +34,7 @@ TEST(EpsCopyInputStreamTest, ZeroSize) {
 //
 // class FakeStream {
 //  public:
-//   FakeStream(const std::string& data) : data_(data), offset_(0) {
+//   explicit FakeStream(const std::string& data) : data_(data), offset_(0) {
 //     limits_.push_back(data.size());
 //   }
 //

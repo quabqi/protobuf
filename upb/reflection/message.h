@@ -12,8 +12,7 @@
 
 #include "upb/mem/arena.h"
 #include "upb/message/map.h"
-#include "upb/message/types.h"
-#include "upb/message/value.h"  // IWYU pragma: export
+#include "upb/message/message.h"
 #include "upb/reflection/common.h"
 
 // Must be last.

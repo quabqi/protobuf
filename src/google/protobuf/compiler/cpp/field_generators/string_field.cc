@@ -88,10 +88,27 @@ class SingularString : public FieldGeneratorBase {
             )cc");
   }
 
+  bool RequiresArena(GeneratorFunction function) const override {
+    switch (function) {
+      case GeneratorFunction::kMergeFrom:
+        return is_oneof();
+    }
+    return false;
+  }
+
   void GenerateMergingCode(io::Printer* p) const override {
-    p->Emit(R"cc(
-      _this->_internal_set_$name$(from._internal_$name$());
-    )cc");
+    if (is_oneof()) {
+      p->Emit(R"cc(
+        if (oneof_needs_init) {
+          _this->$field_$.InitDefault();
+        }
+        _this->$field_$.Set(from._internal_$name$(), arena);
+      )cc");
+    } else {
+      p->Emit(R"cc(
+        _this->_internal_set_$name$(from._internal_$name$());
+      )cc");
+    }
   }
 
   void GenerateArenaDestructorCode(io::Printer* p) const override {
@@ -596,7 +613,7 @@ void SingularString::GenerateConstructorCode(io::Printer* p) const {
     $field_$.InitDefault();
   )cc");
 
-  if (IsString(field_, *opts_) && EmptyDefault()) {
+  if (IsString(field_) && EmptyDefault()) {
     p->Emit(R"cc(
 #ifdef PROTOBUF_FORCE_COPY_DEFAULT_STRING
       $field_$.Set("", GetArena());
@@ -643,14 +660,7 @@ void SingularString::GenerateCopyConstructorCode(io::Printer* p) const {
 
 void SingularString::GenerateDestructorCode(io::Printer* p) const {
   if (is_inlined()) {
-#ifndef PROTOBUF_EXPLICIT_CONSTRUCTORS
-    // Explicitly calls ~InlinedStringField as its automatic call is disabled.
-    // Destructor has been implicitly skipped as a union.
     ABSL_DCHECK(!should_split());
-    p->Emit(R"cc(
-      $field_$.~InlinedStringField();
-    )cc");
-#endif  // !PROTOBUF_EXPLICIT_CONSTRUCTORS
     return;
   }
 
@@ -774,12 +784,6 @@ class RepeatedString : public FieldGeneratorBase {
       p->Emit(R"cc(
         $field_$.DeleteIfNotDefault();
       )cc");
-    } else {
-#ifndef PROTOBUF_EXPLICIT_CONSTRUCTORS
-      p->Emit(R"cc(
-        _internal_mutable_$name$()->~RepeatedPtrField();
-      )cc");
-#endif  // !PROTOBUF_EXPLICIT_CONSTRUCTORS
     }
   }
 

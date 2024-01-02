@@ -35,9 +35,9 @@ elif os.path.exists('../bazel-bin/protoc'):
   protoc = '../bazel-bin/protoc'
 elif os.path.exists('../bazel-bin/protoc.exe'):
   protoc = '../bazel-bin/protoc.exe'
-elif os.path.exists('protoc'):
+elif os.path.exists('../protoc'):
   protoc = '../protoc'
-elif os.path.exists('protoc.exe'):
+elif os.path.exists('../protoc.exe'):
   protoc = '../protoc.exe'
 elif os.path.exists('../vsprojects/Debug/protoc.exe'):
   protoc = '../vsprojects/Debug/protoc.exe'
@@ -389,7 +389,6 @@ if __name__ == '__main__':
     ])
     os.environ['PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION'] = 'cpp'
 
-  # Keep this list of dependencies in sync with tox.ini.
   install_requires = []
 
   setup(
@@ -415,6 +414,7 @@ if __name__ == '__main__':
           'Programming Language :: Python :: 3.9',
           'Programming Language :: Python :: 3.10',
           'Programming Language :: Python :: 3.11',
+          'Programming Language :: Python :: 3.12',
       ],
       namespace_packages=['google'],
       packages=find_packages(

@@ -42,7 +42,7 @@ cc_library(
         "parser.h",
     ],
     copts = COPTS,
-    include_prefix = "google/protobuf/compiler",
+    strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = [
         "//src/google/protobuf:protobuf_nowkt",
@@ -66,7 +66,7 @@ cc_library(
         "scc.h",
     ],
     copts = COPTS,
-    include_prefix = "google/protobuf/compiler",
+    strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = [
         "//src/google/protobuf:protobuf_nowkt",
@@ -82,16 +82,36 @@ cc_library(
 
 cc_library(
     name = "versions",
+    srcs = [
+        "versions.cc",
+    ],
     hdrs = [
         "versions.h",
-        "versions_suffix.h",
     ],
     copts = COPTS,
-    include_prefix = "google/protobuf/compiler",
+    strip_include_prefix = "/src",
     visibility = [
         "//src/google/protobuf/compiler:__subpackages__",
     ],
-    deps = ["@com_google_absl//absl/strings"],
+    deps = [
+        ":code_generator",
+        "//src/google/protobuf:port_def",
+        "@com_google_absl//absl/log:absl_check",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_test(
+    name = "versions_test",
+    size = "small",
+    srcs = ["versions_test.cc"],
+    deps = [
+        ":versions",
+        "//src/google/protobuf:test_textproto",
+        "@com_google_absl//absl/memory",
+        "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
+    ],
 )
 
 cc_library(
@@ -107,13 +127,12 @@ cc_library(
         "zip_writer.h",
     ],
     copts = COPTS,
-    include_prefix = "google/protobuf/compiler",
+    strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = [
         ":code_generator",
         ":importer",
         ":retention",
-        "//src/google/protobuf:descriptor_legacy",
         "//src/google/protobuf:protobuf_nowkt",
         "//src/google/protobuf/compiler/allowlists",
         "@com_google_absl//absl/algorithm",
@@ -133,6 +152,7 @@ cc_library(
         "main.cc",
     ],
     copts = COPTS,
+    strip_include_prefix = "/src",
     visibility = [
         "//:__pkg__",
         "//pkg:__pkg__",
@@ -150,6 +170,23 @@ cc_library(
         "//src/google/protobuf/compiler/python",
         "//src/google/protobuf/compiler/ruby",
         "//src/google/protobuf/compiler/rust",
+        "@com_google_absl//absl/log:initialize",
+    ],
+)
+
+# This is a build of the protobuf compiler without code generators.
+cc_binary(
+    name = "protoc_minimal",
+    srcs = [
+        "main_no_generators.cc",
+    ],
+    copts = COPTS,
+    visibility = [
+        "//:__subpackages__",
+    ],
+    deps = [
+        ":command_line_interface",
+        "//src/google/protobuf:port_def",
         "@com_google_absl//absl/log:initialize",
     ],
 )
@@ -226,6 +263,7 @@ exports_files(
     visibility = [
         "//:__pkg__",
         "//python:__pkg__",
+        "//ruby:__pkg__",
     ],
 )
 
@@ -240,7 +278,6 @@ cc_library(
     deps = [
         ":code_generator",
         "//src/google/protobuf:cc_test_protos",
-        "//src/google/protobuf:descriptor_legacy",
         "//src/google/protobuf:descriptor_visitor",
         "//src/google/protobuf/io",
         "//src/google/protobuf/stubs",
@@ -397,7 +434,7 @@ cc_library(
     name = "retention",
     srcs = ["retention.cc"],
     hdrs = ["retention.h"],
-    include_prefix = "google/protobuf/compiler",
+    strip_include_prefix = "/src",
     visibility = ["//src/google/protobuf:__subpackages__"],
     deps = [
         "//src/google/protobuf:protobuf_nowkt",

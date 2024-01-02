@@ -1,32 +1,9 @@
 // Protocol Buffers - Google's data interchange format
 // Copyright 2023 Google LLC.  All rights reserved.
-// https://developers.google.com/protocol-buffers/
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google LLC nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file or at
+// https://developers.google.com/open-source/licenses/bsd
 
 // Shamelessly copied from the protobuf compiler's subprocess.cc
 // except this version passes strings instead of Messages.
@@ -357,7 +334,7 @@ void Subprocess::Start(const std::string& program, SearchMode search_mode) {
 bool Subprocess::Communicate(const std::string& input_data,
                              std::string* output_data, std::string* error) {
   if (child_stdin_ == -1) {
-    std::cerr << "Must call Start() first." << std::endl;
+    std::cerr << "Must call Start() first." << '\n';
     UPB_ASSERT(child_stdin_ != -1);
   }
 
@@ -387,7 +364,7 @@ bool Subprocess::Communicate(const std::string& input_data,
         // Interrupted by signal.  Try again.
         continue;
       } else {
-        std::cerr << "select: " << strerror(errno) << std::endl;
+        std::cerr << "select: " << strerror(errno) << '\n';
         UPB_ASSERT(0);
       }
     }
@@ -434,7 +411,7 @@ bool Subprocess::Communicate(const std::string& input_data,
   int status;
   while (waitpid(child_pid_, &status, 0) == -1) {
     if (errno != EINTR) {
-      std::cerr << "waitpid: " << strerror(errno) << std::endl;
+      std::cerr << "waitpid: " << strerror(errno) << '\n';
       UPB_ASSERT(0);
     }
   }

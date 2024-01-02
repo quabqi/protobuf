@@ -3,7 +3,7 @@
 load("//bazel:build_defs.bzl", "UPB_DEFAULT_COPTS")
 load(
     "//bazel:upb_proto_library.bzl",
-    "upb_proto_library",
+    "upb_c_proto_library",
     "upb_proto_reflection_library",
 )
 
@@ -20,11 +20,14 @@ cc_library(
     copts = UPB_DEFAULT_COPTS,
     visibility = ["//visibility:public"],
     deps = [
-        "//upb:lex",
+        "//upb:base",
+        "//upb:mem",
         "//upb:message",
+        "//upb:mini_table",
         "//upb:port",
         "//upb:reflection",
         "//upb:wire",
+        "//upb/lex",
     ],
 )
 
@@ -36,9 +39,11 @@ cc_test(
         ":struct_upb_proto",
         ":test_upb_proto",
         ":test_upb_proto_reflection",
-        "@com_google_googletest//:gtest_main",
+        "//upb:base",
         "//upb:mem",
         "//upb:reflection",
+        "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -50,10 +55,11 @@ cc_test(
         ":struct_upb_proto",
         ":test_upb_proto",
         ":test_upb_proto_reflection",
-        "@com_google_googletest//:gtest_main",
         "//upb:base",
         "//upb:mem",
         "//upb:reflection",
+        "@com_google_googletest//:gtest",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
@@ -64,7 +70,7 @@ proto_library(
     deps = ["//:struct_proto"],
 )
 
-upb_proto_library(
+upb_c_proto_library(
     name = "test_upb_proto",
     testonly = 1,
     deps = [":test_proto"],
@@ -77,8 +83,49 @@ upb_proto_reflection_library(
 )
 
 # TODO: This target arguably belongs in //google/protobuf/BUILD
-upb_proto_library(
+upb_c_proto_library(
     name = "struct_upb_proto",
     testonly = 1,
     deps = ["//:struct_proto"],
 )
+
+# begin:google_only
+# cc_test(
+#     name = "fuzz_test",
+#     srcs = ["fuzz_test.cc"],
+#     deps = [
+#         ":json",
+#         ":test_upb_proto",
+#         ":test_upb_proto_reflection",
+#         "@com_google_googletest//:gtest", "@com_google_googletest//:gtest_main",
+#         "//testing/fuzzing:fuzztest",
+#         "//upb:base",
+#         "//upb:mem",
+#         "//upb:message",
+#         "//upb:mini_table",
+#         "//upb:reflection",
+#     ],
+# )
+# end:google_only
+
+# begin:github_only
+filegroup(
+    name = "test_srcs",
+    srcs = glob(
+        [
+            "**/*test.cc",
+        ],
+    ),
+    visibility = ["//pkg:__pkg__"],
+)
+
+filegroup(
+    name = "test_utils",
+    srcs = glob(
+        [
+            "**/*test.proto",
+        ],
+    ),
+    visibility = ["//pkg:__pkg__"],
+)
+# end:github_only
