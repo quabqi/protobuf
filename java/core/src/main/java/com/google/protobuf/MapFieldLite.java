@@ -65,6 +65,7 @@ public final class MapFieldLite<K, V> extends LinkedHashMap<K, V> {
   }
 
   @Override
+  @CanIgnoreReturnValue
   public V put(K key, V value) {
     ensureMutable();
     checkNotNull(key);
@@ -73,6 +74,7 @@ public final class MapFieldLite<K, V> extends LinkedHashMap<K, V> {
     return super.put(key, value);
   }
 
+  @CanIgnoreReturnValue
   public V put(Map.Entry<K, V> entry) {
     return put(entry.getKey(), entry.getValue());
   }
@@ -85,6 +87,7 @@ public final class MapFieldLite<K, V> extends LinkedHashMap<K, V> {
   }
 
   @Override
+  @CanIgnoreReturnValue
   public V remove(Object key) {
     ensureMutable();
     return super.remove(key);
@@ -97,7 +100,9 @@ public final class MapFieldLite<K, V> extends LinkedHashMap<K, V> {
     }
   }
 
-  private static boolean equals(Object a, Object b) {
+  private static boolean equals(
+          Object a,
+      Object b) {
     if (a instanceof byte[] && b instanceof byte[]) {
       return Arrays.equals((byte[]) a, (byte[]) b);
     }
@@ -129,7 +134,8 @@ public final class MapFieldLite<K, V> extends LinkedHashMap<K, V> {
   /** Checks whether two map fields are equal. */
   @SuppressWarnings("unchecked")
   @Override
-  public boolean equals(Object object) {
+  public boolean equals(
+          Object object) {
     return (object instanceof Map) && equals(this, (Map<K, V>) object);
   }
 

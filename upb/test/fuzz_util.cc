@@ -19,6 +19,7 @@
 #include "upb/mini_table/extension.h"
 #include "upb/mini_table/extension_registry.h"
 #include "upb/mini_table/field.h"
+#include "upb/mini_table/internal/field.h"
 #include "upb/mini_table/message.h"
 #include "upb/mini_table/sub.h"
 
@@ -96,8 +97,7 @@ void Builder::BuildEnums() {
 }
 
 bool Builder::LinkExtension(upb_MiniTableExtension* ext) {
-  upb_MiniTableField* field =
-      (upb_MiniTableField*)upb_MiniTableExtension_AsField(ext);
+  upb_MiniTableField* field = &ext->UPB_PRIVATE(field);
   if (upb_MiniTableField_CType(field) == kUpb_CType_Message) {
     auto mt = NextMiniTable();
     if (!mt) field->UPB_PRIVATE(descriptortype) = kUpb_FieldType_Int32;
@@ -159,6 +159,7 @@ bool Builder::LinkMessages() {
           // We don't have any sub-enums.  Override the field type so that it is
           // not needed.
           field->UPB_PRIVATE(descriptortype) = kUpb_FieldType_Int32;
+          field->UPB_PRIVATE(submsg_ofs) = kUpb_NoSub;
         }
       }
     }

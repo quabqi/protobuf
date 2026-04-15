@@ -43,7 +43,7 @@ namespace objectivec {
 namespace {
 
 // This is also found in GPBBootstrap.h, and needs to be kept in sync.
-const int32_t GOOGLE_PROTOBUF_OBJC_VERSION = 30007;
+const int32_t GOOGLE_PROTOBUF_OBJC_VERSION = 40311;
 
 const char* kHeaderExtension = ".pbobjc.h";
 
@@ -155,7 +155,7 @@ void EmitLinkWKTs(absl::string_view name, io::Printer* p) {
             // This is to help make sure that the GPBWellKnownTypes.* categories get linked and
             // developers do not have to use the `-ObjC` linker flag. More information
             // here: https://medium.com/ios-os-x-development/categories-in-static-libraries-78e41f8ddb96
-            __attribute__((used)) static NSString* $basename$_importCategories () {
+            __attribute__((used)) static NSString* $basename$_importCategories(void) {
               return GPBWellKnownTypesErrorDomain;
             }
           )objc");
@@ -264,13 +264,16 @@ FileGenerator::CommonState::CollectMinimalFileDepsContainingExtensions(
   return result;
 }
 
-FileGenerator::FileGenerator(const FileDescriptor* file,
+FileGenerator::FileGenerator(Edition edition, const FileDescriptor* file,
                              const GenerationOptions& generation_options,
                              CommonState& common_state)
-    : file_(file),
+    : edition_(edition),
+      file_(file),
       generation_options_(generation_options),
       common_state_(&common_state),
       root_class_name_(FileClassName(file)),
+      file_unique_symbol_name_(FileUniqueSymbolName(file, "")),
+      file_registry_function_name_(ExtensionRegistryFunctionName(file)),
       file_description_name_(FileClassName(file) + "_FileDescription"),
       is_bundled_proto_(IsProtobufLibraryBundledProtoFile(file)) {
   for (int i = 0; i < file_->enum_type_count(); i++) {
@@ -281,8 +284,8 @@ FileGenerator::FileGenerator(const FileDescriptor* file,
     const FieldDescriptor* extension = file_->extension(i);
     if (!generation_options.strip_custom_options ||
         !ExtensionIsCustomOption(extension)) {
-      extension_generators_.push_back(std::make_unique<ExtensionGenerator>(
-          root_class_name_, extension, generation_options));
+      extension_generators_.push_back(
+          std::make_unique<ExtensionGenerator>(extension, generation_options));
     }
   }
   file_scoped_extension_count_ = extension_generators_.size();
@@ -302,7 +305,8 @@ FileGenerator::FileGenerator(const FileDescriptor* file,
   }
 }
 
-void FileGenerator::GenerateHeader(io::Printer* p) const {
+void FileGenerator::GenerateHeader(io::Printer* p,
+                                   absl::string_view info_path) const {
   GenerateFile(p, GeneratedFileType::kHeader, [&] {
     absl::btree_set<std::string> fwd_decls;
     for (const auto& generator : message_generators_) {
@@ -320,44 +324,79 @@ void FileGenerator::GenerateHeader(io::Printer* p) const {
 
     p->Emit("NS_ASSUME_NONNULL_BEGIN\n\n");
 
+    if (!info_path.empty()) {
+      p->Emit({{"info_path", info_path},
+               {"guard", generation_options_.annotation_guard_name},
+               {"pragma", generation_options_.annotation_pragma_name}},
+              R"objc(
+                #ifdef $guard$
+                #pragma $pragma$ "$info_path$"
+                #endif  // $guard$
+              )objc");
+      p->Emit("\n");
+    }
+
     for (const auto& generator : enum_generators_) {
       generator->GenerateHeader(p);
     }
 
-    // For extensions to chain together, the Root gets created even if there
-    // are no extensions.
-    p->Emit(R"objc(
-      #pragma mark - $root_class_name$
+    if (generation_options_.EmitCFunctionExtensions()) {
+      // For extensions to chain together, the Root gets created even if there
+      // are no extensions.
+      p->Emit(R"objc(
+      #pragma mark - $file_unique_symbol_name$ extension registry
 
       /**
-       * Exposes the extension registry for this file.
-       *
-       * The base class provides:
-       * @code
-       *   + (GPBExtensionRegistry *)extensionRegistry;
-       * @endcode
-       * which is a @c GPBExtensionRegistry that includes all the extensions defined by
+       * An @c GPBExtensionRegistry that includes all the extensions defined by
        * this file and all files that it depends on.
        **/
-      GPB_FINAL @interface $root_class_name$ : GPBRootObject
-      @end
+      GPBExtensionRegistry *$file_registry_function_name$(void);
     )objc");
-    p->Emit("\n");
+      p->Emit("\n");
 
-    // The dynamic methods block is only needed if there are extensions that are
-    // file level scoped (not message scoped). The first
-    // file_scoped_extension_count_ of extension_generators_ are the file scoped
-    // ones.
-    if (file_scoped_extension_count_) {
-      p->Emit("@interface $root_class_name$ (DynamicMethods)\n");
-
-      for (size_t i = 0; i < file_scoped_extension_count_; i++) {
-        extension_generators_[i]->GenerateMembersHeader(p);
+      if (file_scoped_extension_count_) {
+        for (size_t i = 0; i < file_scoped_extension_count_; i++) {
+          extension_generators_[i]->GenerateFunctionsHeader(p);
+        }
       }
-
-      p->Emit("@end\n\n");
     }
 
+    if (generation_options_.EmitClassBasedExtensions()) {
+      // Root class interface declaration.
+      p->Emit(R"objc(
+        #pragma mark - $root_class_name$
+
+        /**
+         * Exposes the extension registry for this file.
+         *
+         * The base class provides:
+         * @code
+         *   + (GPBExtensionRegistry *)extensionRegistry;
+         * @endcode
+         * which is a @c GPBExtensionRegistry that includes all the extensions defined by
+         * this file and all files that it depends on.
+         **/
+        GPB_FINAL @interface $root_class_name$ : GPBRootObject
+        @end
+      )objc");
+      p->Emit("\n");
+
+      // The dynamic methods block is only needed if there are extensions that
+      // are file level scoped (not message scoped). The first
+      // file_scoped_extension_count_ of extension_generators_ are the file
+      // scoped ones.
+      if (file_scoped_extension_count_) {
+        p->Emit("@interface $root_class_name$ (DynamicMethods)\n");
+
+        for (size_t i = 0; i < file_scoped_extension_count_; i++) {
+          extension_generators_[i]->GenerateMethodsHeader(p);
+        }
+
+        p->Emit("@end\n\n");
+      }
+    }
+
+    // Message headers
     for (const auto& generator : message_generators_) {
       generator->GenerateMessageHeader(p);
     }
@@ -458,7 +497,7 @@ void FileGenerator::GenerateSourceForEnums(io::Printer* p) const {
   });
 }
 
-void FileGenerator::GenerateSourceForMessage(int idx, io::Printer* p) const {
+void FileGenerator::GenerateSourceForMessage(size_t idx, io::Printer* p) const {
   ABSL_CHECK(!is_bundled_proto_)
       << "Bundled protos aren't expected to use multi source generation.";
   const auto& generator = message_generators_[idx];
@@ -529,7 +568,7 @@ void FileGenerator::GenerateFile(io::Printer* p, GeneratedFileType file_type,
           // #import the headers for anything that a plain dependency of this
           // proto file (that means they were just an include, not a "public"
           // include).
-          absl::flat_hash_set<std::string> public_import_names;
+          absl::flat_hash_set<absl::string_view> public_import_names;
           for (int i = 0; i < file_->public_dependency_count(); i++) {
             public_import_names.insert(file_->public_dependency(i)->name());
           }
@@ -593,10 +632,19 @@ void FileGenerator::GenerateFile(io::Printer* p, GeneratedFileType file_type,
        // then honor the directives within the generators sources.
        "clangfmt", "clang-format"},
       {"root_class_name", root_class_name_},
+      {"file_unique_symbol_name", file_unique_symbol_name_},
+      {"file_registry_function_name", file_registry_function_name_},
+      {"google_protobuf_runtime_support",
+       absl::StrCat("GOOGLE_PROTOBUF_OBJC_EXPECTED_GENCODE_VERSION_",
+                    GOOGLE_PROTOBUF_OBJC_VERSION)},
   });
 
   p->Emit(
       {
+          {"no_checked_in",
+           "NO CHECKED-IN"
+           // Intentional line breaker
+           " PROTOBUF GENCODE"},
           {"filename", file_->name()},
           {"google_protobuf_objc_version", GOOGLE_PROTOBUF_OBJC_VERSION},
           {"runtime_imports",
@@ -631,6 +679,7 @@ void FileGenerator::GenerateFile(io::Printer* p, GeneratedFileType file_type,
       },
       R"objc(
         // Generated by the protocol buffer compiler.  DO NOT EDIT!
+        // $no_checked_in$
         // $clangfmt$ off
         // source: $filename$
 
@@ -670,32 +719,64 @@ void FileGenerator::GenerateFile(io::Printer* p, GeneratedFileType file_type,
 void FileGenerator::EmitRootImplementation(
     io::Printer* p,
     const std::vector<const FileDescriptor*>& deps_with_extensions) const {
-  p->Emit(
-      R"objc(
+  if (generation_options_.EmitCFunctionExtensions()) {
+    p->Emit(
+        R"objc(
+        #pragma mark - $file_unique_symbol_name$ extension registry
+      )objc");
+
+    p->Emit("\n");
+
+    EmitExtensionRegistryAndDescriptorFunctions(p, deps_with_extensions);
+    p->Emit("\n");
+  }
+
+  if (generation_options_.EmitClassBasedExtensions()) {
+    p->Emit(
+        R"objc(
         #pragma mark - $root_class_name$
 
         @implementation $root_class_name$
       )objc");
 
-  p->Emit("\n");
+    p->Emit("\n");
 
-  // If there were any extensions or this file has any dependencies,
-  // output a registry to override to create the file specific
-  // registry.
-  if (extension_generators_.empty() && deps_with_extensions.empty()) {
-    p->Emit(R"objc(
+    // If there were any extensions or this file has any dependencies,
+    // output a registry to override to create the file specific
+    // registry.
+    if (extension_generators_.empty() && deps_with_extensions.empty()) {
+      p->Emit(R"objc(
       // No extensions in the file and no imports or none of the imports (direct or
       // indirect) defined extensions, so no need to generate +extensionRegistry.
     )objc");
-  } else {
-    EmitRootExtensionRegistryImplementation(p, deps_with_extensions);
-  }
+    } else {
+      if (generation_options_.extension_generation_mode ==
+          ExtensionGenerationMode::kMigration) {
+        EmitRootExtensionRegistryMigrationClassMethods(p, deps_with_extensions);
+      } else {
+        EmitRootExtensionRegistryClassBasedClassMethods(p,
+                                                        deps_with_extensions);
+      }
+    }
 
+    p->Emit("\n");
+    p->Emit("@end\n");
+  }
   p->Emit("\n");
-  p->Emit("@end\n\n");
 }
 
-void FileGenerator::EmitRootExtensionRegistryImplementation(
+void FileGenerator::EmitRootExtensionRegistryMigrationClassMethods(
+    io::Printer* p,
+    const std::vector<const FileDescriptor*>& deps_with_extensions) const {
+  p->Emit(
+      R"objc(
+        + (GPBExtensionRegistry*)extensionRegistry {
+          return $file_unique_symbol_name$_Registry();
+        }
+      )objc");
+}
+
+void FileGenerator::EmitRootExtensionRegistryClassBasedClassMethods(
     io::Printer* p,
     const std::vector<const FileDescriptor*>& deps_with_extensions) const {
   p->Emit(
@@ -721,7 +802,7 @@ void FileGenerator::EmitRootExtensionRegistryImplementation(
                    for (size_t i = 0; i < sizeof(descriptions) / sizeof(descriptions[0]); ++i) {
                      GPBExtensionDescriptor *extension =
                          [[GPBExtensionDescriptor alloc] initWithExtensionDescription:&descriptions[i]
-                                                                        usesClassRefs:YES];
+                                                                       runtimeSupport:&$google_protobuf_runtime_support$];
                      [registry addExtension:extension];
                      [self globallyRegisterExtension:extension];
                      [extension release];
@@ -754,13 +835,90 @@ void FileGenerator::EmitRootExtensionRegistryImplementation(
           // about thread safety and initialization of registry.
           static GPBExtensionRegistry* registry = nil;
           if (!registry) {
-            GPB_DEBUG_CHECK_RUNTIME_VERSIONS();
             registry = [[GPBExtensionRegistry alloc] init];
             $register_local_extensions$;
             $register_imports$
           }
           return registry;
         }
+      )objc");
+}
+
+void FileGenerator::EmitExtensionRegistryAndDescriptorFunctions(
+    io::Printer* p,
+    const std::vector<const FileDescriptor*>& deps_with_extensions) const {
+  p->Emit(
+      {{"register_local_extensions",
+        [&] {
+          if (extension_generators_.empty()) {
+            return;
+          }
+          p->Emit(
+              {
+                  {"add_extension_to_registry_function_calls",
+                   [&] {
+                     for (const auto& generator : extension_generators_) {
+                       generator->GenerateAddExtensionToRegistryFunctionCall(p);
+                     }
+                   }},
+                  {"add_extension_to_global_registry_function_calls",
+                   [&] {
+                     if (generation_options_.extension_generation_mode ==
+                         ExtensionGenerationMode::kMigration) {
+                       for (const auto& generator : extension_generators_) {
+                         generator
+                             ->GenerateAddExtensionToGlobalRegistryFunctionCall(
+                                 p);
+                       }
+                     }
+                   }},
+              },
+              R"objc(
+                    $add_extension_to_registry_function_calls$
+                    $add_extension_to_global_registry_function_calls$
+                 )objc");
+        }},
+       {"register_imports",
+        [&] {
+          if (deps_with_extensions.empty()) {
+            p->Emit(R"objc(
+                 // None of the imports (direct or indirect) defined extensions, so no need to add
+                 // them to this registry.
+               )objc");
+          } else {
+            p->Emit(R"objc(
+                 // Merge in the imports (direct or indirect) that defined extensions.
+               )objc");
+            for (const auto& dep : deps_with_extensions) {
+              p->Emit({{"dependency_registry",
+                        FileUniqueSymbolName(dep, "Registry")}},
+                      R"objc(
+                           [registry addExtensions:$dependency_registry$()];
+                         )objc");
+            }
+          }
+        }},
+       {
+           "extension_descriptor_functions",
+           [&] {
+             for (const auto& generator : extension_generators_) {
+               generator->GenerateDescriptorFunction(p);
+             }
+           },
+       }},
+      R"objc(
+        GPBExtensionRegistry *$file_unique_symbol_name$_Registry(void) {
+          static GPBExtensionRegistry *registry = nil;
+          static dispatch_once_t onceToken;
+          dispatch_once(&onceToken, ^{
+            registry = [[GPBExtensionRegistry alloc] init];
+            $register_local_extensions$;
+            $register_imports$
+          });
+          return registry;
+        }
+
+        $extension_descriptor_functions$
       )objc");
 }
 
@@ -777,7 +935,7 @@ void FileGenerator::EmitFileDescription(io::Printer* p) const {
     // mode.
     syntax = "GPBFileSyntaxUnknown";
   } else {
-    switch (file_->edition()) {
+    switch (edition_) {
       case Edition::EDITION_UNKNOWN:
         syntax = "GPBFileSyntaxUnknown";
         break;
@@ -800,13 +958,11 @@ void FileGenerator::EmitFileDescription(io::Printer* p) const {
            {"prefix_value",
             objc_prefix.empty() && !file_->options().has_objc_class_prefix()
                 ? "NULL"
-                : absl::StrCat("\"", objc_prefix, "\"")},
-           {"syntax", syntax}},
+                : absl::StrCat("\"", objc_prefix, "\"")}},
           R"objc(
-            static GPBFileDescription $file_description_name$ = {
+            static GPBFilePackageAndPrefix $file_description_name$ = {
               .package = $package_value$,
-              .prefix = $prefix_value$,
-              .syntax = $syntax$
+              .prefix = $prefix_value$
             };
           )objc");
   p->Emit("\n");
@@ -817,8 +973,17 @@ void FileGenerator::DetermineNeededDeps(
     PublicDepsHandling public_deps_handling) const {
   // This logic captures the deps that are needed for types thus removing the
   // ones that are only deps because they provide the definitions for custom
-  // options. If protoc gets something like "import options" then this logic can
-  // go away as the non "import options" deps would be the ones needed.
+  // options.
+  //
+  // However, this as the side effect of if something was needed and it was
+  // coming from a `import public` *within* an `import`, then a `#import` will
+  // be generated for that otherwise transitive import. If some build system
+  // wants to do some sort of strict layering checks on the generated code, then
+  // it will fail those checks.
+  //
+  // Since the original intent of this "mode" was to help prune out headers for
+  // custom options, and protobuf now does support `import option`, it likely
+  // makes sense to remove this in the future instead.
 
   if (public_deps_handling == PublicDepsHandling::kForceInclude) {
     for (int i = 0; i < file_->public_dependency_count(); i++) {

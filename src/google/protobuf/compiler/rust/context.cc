@@ -41,7 +41,7 @@ absl::StatusOr<Options> Options::Parse(absl::string_view param) {
     return absl::InvalidArgumentError(
         "The Rust codegen is highly experimental. Future versions will break "
         "existing code. Use at your own risk. You can opt-in by passing "
-        "'experimental-codegen=enabled' to '--rust_out'.");
+        "'experimental-codegen=enabled' to '--rust_opt'.");
   }
 
   Options opts;
@@ -65,6 +65,40 @@ absl::StatusOr<Options> Options::Parse(absl::string_view param) {
                          kernel_arg->second));
   }
 
+  auto mapping_arg = absl::c_find_if(
+      args, [](auto& arg) { return arg.first == "crate_mapping"; });
+  if (mapping_arg != args.end()) {
+    opts.mapping_file_path = mapping_arg->second;
+  }
+
+  auto strip_nonfunctional_codegen_arg = absl::c_find_if(args, [](auto& arg) {
+    return arg.first == "experimental_strip_nonfunctional_codegen";
+  });
+  if (strip_nonfunctional_codegen_arg != args.end()) {
+    opts.strip_nonfunctional_codegen = true;
+  }
+
+  auto generated_entry_point_rs_file_name_arg =
+      absl::c_find_if(args, [](auto& arg) {
+        return arg.first == "generated_entry_point_rs_file_name";
+      });
+  if (generated_entry_point_rs_file_name_arg != args.end()) {
+    opts.generated_entry_point_rs_file_name =
+        generated_entry_point_rs_file_name_arg->second;
+  }
+
+  auto lite = absl::c_find_if(
+      args, [](auto& arg) { return arg.first == "forced_lite_runtime"; });
+  if (lite != args.end()) {
+    opts.force_lite_runtime = lite->second == "true";
+  }
+
+  auto annotate_code = absl::c_find_if(
+      args, [](auto& arg) { return arg.first == "annotate_code"; });
+  if (annotate_code != args.end()) {
+    opts.annotate_code = annotate_code->second == "true";
+  }
+
   return opts;
 }
 
@@ -74,6 +108,10 @@ bool IsInCurrentlyGeneratingCrate(Context& ctx, const FileDescriptor& file) {
 
 bool IsInCurrentlyGeneratingCrate(Context& ctx, const Descriptor& message) {
   return IsInCurrentlyGeneratingCrate(ctx, *message.file());
+}
+
+bool IsInCurrentlyGeneratingCrate(Context& ctx, const EnumDescriptor& enum_) {
+  return IsInCurrentlyGeneratingCrate(ctx, *enum_.file());
 }
 
 }  // namespace rust

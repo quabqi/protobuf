@@ -10,11 +10,11 @@
 #include <sstream>
 
 #include "google/protobuf/compiler/code_generator.h"
-#include "google/protobuf/descriptor.h"
 #include "google/protobuf/compiler/csharp/csharp_doc_comment.h"
 #include "google/protobuf/compiler/csharp/csharp_helpers.h"
 #include "google/protobuf/compiler/csharp/csharp_message_field.h"
 #include "google/protobuf/compiler/csharp/csharp_wrapper_field.h"
+#include "google/protobuf/descriptor.h"
 #include "google/protobuf/descriptor.pb.h"
 #include "google/protobuf/io/printer.h"
 #include "google/protobuf/io/zero_copy_stream.h"
@@ -29,9 +29,7 @@ RepeatedMessageFieldGenerator::RepeatedMessageFieldGenerator(
     : FieldGeneratorBase(descriptor, presenceIndex, options) {
 }
 
-RepeatedMessageFieldGenerator::~RepeatedMessageFieldGenerator() {
-
-}
+RepeatedMessageFieldGenerator::~RepeatedMessageFieldGenerator() = default;
 
 void RepeatedMessageFieldGenerator::GenerateMembers(io::Printer* printer) {
   printer->Print(
@@ -54,7 +52,7 @@ void RepeatedMessageFieldGenerator::GenerateMembers(io::Printer* printer) {
   printer->Print(
     variables_,
     "private readonly pbc::RepeatedField<$type_name$> $name$_ = new pbc::RepeatedField<$type_name$>();\n");
-  WritePropertyDocComment(printer, descriptor_);
+  WritePropertyDocComment(printer, options(), descriptor_);
   AddPublicMemberAttributes(printer);
   printer->Print(
     variables_,
@@ -127,7 +125,7 @@ void RepeatedMessageFieldGenerator::GenerateFreezingCode(io::Printer* printer) {
 }
 
 void RepeatedMessageFieldGenerator::GenerateExtensionCode(io::Printer* printer) {
-  WritePropertyDocComment(printer, descriptor_);
+  WritePropertyDocComment(printer, options(), descriptor_);
   AddDeprecatedFlag(printer);
   printer->Print(
     variables_,

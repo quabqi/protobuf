@@ -5,10 +5,11 @@
 // license that can be found in the LICENSE file or at
 // https://developers.google.com/open-source/licenses/bsd
 
-#import "GPBTestUtilities.h"
-
 #import "GPBCodedInputStream.h"
+#import "GPBCodedOutputStream.h"
 #import "GPBCodedOutputStream_PackagePrivate.h"
+#import "GPBTestUtilities.h"
+#import "GPBUtilities.h"
 #import "GPBUtilities_PackagePrivate.h"
 #import "objectivec/Tests/Unittest.pbobjc.h"
 
@@ -329,7 +330,7 @@
   // This test exists to verify that CFStrings with embedded NULLs still expose
   // their raw buffer if they are backed by UTF8 storage. If this fails, the
   // quick/direct access paths in GPBCodedOutputStream that depend on
-  // CFStringGetCStringPtr need to be re-evalutated (maybe just removed).
+  // CFStringGetCStringPtr need to be re-evaluated (maybe just removed).
   // And yes, we do get NULLs in strings from some servers.
 
   char zeroTest[] = "\0Test\0String";
@@ -384,30 +385,34 @@
 }
 
 - (void)testThatItThrowsWhenWriteRawPtrFails {
-  NSOutputStream* output = [NSOutputStream outputStreamToMemory];
-  GPBCodedOutputStream* codedOutput =
-      [GPBCodedOutputStream streamWithOutputStream:output bufferSize:0];  // Skip buffering.
-  [output close];  // Close the output stream to force failure on write.
-  const char* cString = "raw";
+  const char* cString = "some test data to write";
+
+  // Make an outputString that won't be long enough for the data so the stream will
+  // eventually fail the write.
+  uint8_t buffer[2] = {0, 0};
+  NSOutputStream* output = [[[NSOutputStream alloc] initToBuffer:buffer
+                                                        capacity:sizeof(buffer)] autorelease];
+
+  // Use a tiny buffers so `writeRawPtr:offset:length:` will eventaully write directly.
+  GPBCodedOutputStream* codedOutput = [GPBCodedOutputStream streamWithOutputStream:output
+                                                                        bufferSize:1];
+
   XCTAssertThrowsSpecificNamed([codedOutput writeRawPtr:cString offset:0 length:strlen(cString)],
                                NSException, GPBCodedOutputStreamException_WriteFailed);
 }
 
 - (void)testThatDeallocNeverThrows {
+  // Output stream which can write precisely 1 byte of data before it is full.
   uint8_t buffer[1] = {0};
-
-  // Output stream which can write precisely 1 byte of data before it's full.
   NSOutputStream* output = [[[NSOutputStream alloc] initToBuffer:buffer
                                                         capacity:sizeof(buffer)] autorelease];
+  GPBCodedOutputStream* codedOutput = [[GPBCodedOutputStream alloc] initWithOutputStream:output];
 
-  NSMutableData* outputBuffer = [NSMutableData data];
-  GPBCodedOutputStream* codedOutput =
-      [[GPBCodedOutputStream alloc] initWithOutputStream:output data:outputBuffer];
-
+  // First byte and flush (filling it)
   [codedOutput writeRawByte:0x23];
   [codedOutput flush];
 
-  // Put one more byte in the output buffer.
+  // One more byte will fail on flush due to lack of space in the stream.
   [codedOutput writeRawByte:0x42];
   XCTAssertThrowsSpecificNamed([codedOutput flush], NSException,
                                GPBCodedOutputStreamException_WriteFailed);

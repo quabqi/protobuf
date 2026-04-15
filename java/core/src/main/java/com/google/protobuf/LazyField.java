@@ -22,26 +22,9 @@ import java.util.Map.Entry;
  */
 public class LazyField extends LazyFieldLite {
 
-  /**
-   * Carry a message's default instance which is used by {@code hashCode()}, {@code equals()}, and
-   * {@code toString()}.
-   */
-  private final MessageLite defaultInstance;
-
   public LazyField(
       MessageLite defaultInstance, ExtensionRegistryLite extensionRegistry, ByteString bytes) {
-    super(extensionRegistry, bytes);
-
-    this.defaultInstance = defaultInstance;
-  }
-
-  @Override
-  public boolean containsDefaultInstance() {
-    return super.containsDefaultInstance() || value == defaultInstance;
-  }
-
-  public MessageLite getValue() {
-    return getValue(defaultInstance);
+    super(defaultInstance, extensionRegistry, bytes);
   }
 
   @Override
@@ -50,7 +33,8 @@ public class LazyField extends LazyFieldLite {
   }
 
   @Override
-  public boolean equals(Object obj) {
+  public boolean equals(
+          Object obj) {
     return getValue().equals(obj);
   }
 

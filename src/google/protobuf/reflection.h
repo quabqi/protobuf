@@ -13,6 +13,7 @@
 #include <memory>
 #include <type_traits>
 
+#include "absl/base/attributes.h"
 #include "google/protobuf/generated_enum_util.h"
 #include "google/protobuf/descriptor.h"
 
@@ -51,9 +52,15 @@ class RepeatedFieldRef<
   typedef typename internal::RefTypeTraits<T>::AccessorType AccessorType;
 
  public:
-  bool empty() const { return accessor_->IsEmpty(data_); }
-  int size() const { return accessor_->Size(data_); }
-  T Get(int index) const { return accessor_->template Get<T>(data_, index); }
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD bool empty() const {
+    return accessor_->IsEmpty(data_);
+  }
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD int size() const {
+    return accessor_->Size(data_);
+  }
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD T Get(int index) const {
+    return accessor_->template Get<T>(data_, index);
+  }
 
   typedef IteratorType iterator;
   typedef IteratorType const_iterator;
@@ -63,21 +70,25 @@ class RepeatedFieldRef<
   typedef int size_type;
   typedef ptrdiff_t difference_type;
 
-  iterator begin() const { return iterator(data_, accessor_, true); }
-  iterator end() const { return iterator(data_, accessor_, false); }
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD iterator begin() const {
+    return iterator(data_, accessor_, true);
+  }
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD iterator end() const {
+    return iterator(data_, accessor_, false);
+  }
 
  private:
   friend class Reflection;
   RepeatedFieldRef(const MakeDependent<T, Message>& message,
-                   const FieldDescriptor* field) {
+                   const FieldDescriptor* PROTOBUF_NONNULL field) {
     const auto* reflection = message.GetReflection();
     data_ = reflection->RepeatedFieldData(
         message, field, internal::RefTypeTraits<T>::cpp_type, nullptr);
     accessor_ = reflection->RepeatedFieldAccessor(field);
   }
 
-  const void* data_;
-  const AccessorType* accessor_;
+  const void* PROTOBUF_NONNULL data_;
+  const AccessorType* PROTOBUF_NONNULL accessor_;
 };
 
 // MutableRepeatedFieldRef definition for non-message types.
@@ -87,16 +98,21 @@ class MutableRepeatedFieldRef<
   typedef typename internal::RefTypeTraits<T>::AccessorType AccessorType;
 
  public:
-  bool empty() const { return accessor_->IsEmpty(data_); }
-  int size() const { return accessor_->Size(data_); }
-  T Get(int index) const { return accessor_->template Get<T>(data_, index); }
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD bool empty() const {
+    return accessor_->IsEmpty(data_);
+  }
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD int size() const {
+    return accessor_->Size(data_);
+  }
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD T Get(int index) const {
+    return accessor_->template Get<T>(data_, index);
+  }
 
   void Set(int index, const T& value) const {
     accessor_->template Set<T>(data_, index, value);
   }
   void Add(const T& value) const { accessor_->template Add<T>(data_, value); }
   void RemoveLast() const { accessor_->RemoveLast(data_); }
-  void Reserve(int size) const { accessor_->Reserve(data_, size); }
   void SwapElements(int index1, int index2) const {
     accessor_->SwapElements(data_, index1, index2);
   }
@@ -121,16 +137,16 @@ class MutableRepeatedFieldRef<
 
  private:
   friend class Reflection;
-  MutableRepeatedFieldRef(MakeDependent<T, Message>* message,
-                          const FieldDescriptor* field) {
+  MutableRepeatedFieldRef(MakeDependent<T, Message>* PROTOBUF_NONNULL message,
+                          const FieldDescriptor* PROTOBUF_NONNULL field) {
     const auto* reflection = message->GetReflection();
     data_ = reflection->RepeatedFieldData(
         message, field, internal::RefTypeTraits<T>::cpp_type, nullptr);
     accessor_ = reflection->RepeatedFieldAccessor(field);
   }
 
-  void* data_;
-  const AccessorType* accessor_;
+  void* PROTOBUF_NONNULL data_;
+  const AccessorType* PROTOBUF_NONNULL accessor_;
 };
 
 // RepeatedFieldRef definition for message types.
@@ -141,8 +157,12 @@ class RepeatedFieldRef<
   typedef typename internal::RefTypeTraits<T>::AccessorType AccessorType;
 
  public:
-  bool empty() const { return accessor_->IsEmpty(data_); }
-  int size() const { return accessor_->Size(data_); }
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD bool empty() const {
+    return accessor_->IsEmpty(data_);
+  }
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD int size() const {
+    return accessor_->Size(data_);
+  }
   // This method returns a reference to the underlying message object if it
   // exists. If a message object doesn't exist (e.g., data stored in serialized
   // form), scratch_space will be filled with the data and a reference to it
@@ -152,12 +172,13 @@ class RepeatedFieldRef<
   //   RepeatedFieldRef<Message> h = ...
   //   unique_ptr<Message> scratch_space(h.NewMessage());
   //   const Message& item = h.Get(index, scratch_space.get());
-  const T& Get(int index, T* scratch_space) const {
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD const T& Get(
+      int index, T* PROTOBUF_NULLABLE scratch_space) const {
     return *static_cast<const T*>(accessor_->Get(data_, index, scratch_space));
   }
   // Create a new message of the same type as the messages stored in this
   // repeated field. Caller takes ownership of the returned object.
-  T* NewMessage() const { return default_instance_->New(); }
+  T* PROTOBUF_NONNULL NewMessage() const { return default_instance_->New(); }
 
   typedef IteratorType iterator;
   typedef IteratorType const_iterator;
@@ -167,10 +188,10 @@ class RepeatedFieldRef<
   typedef int size_type;
   typedef ptrdiff_t difference_type;
 
-  iterator begin() const {
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD iterator begin() const {
     return iterator(data_, accessor_, true, NewMessage());
   }
-  iterator end() const {
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD iterator end() const {
     // The end iterator must not be dereferenced, no need for scratch space.
     return iterator(data_, accessor_, false, nullptr);
   }
@@ -178,7 +199,7 @@ class RepeatedFieldRef<
  private:
   friend class Reflection;
   RepeatedFieldRef(const MakeDependent<T, Message>& message,
-                   const FieldDescriptor* field) {
+                   const FieldDescriptor* PROTOBUF_NONNULL field) {
     const auto* reflection = message.GetReflection();
     data_ = reflection->RepeatedFieldData(
         message, field, internal::RefTypeTraits<T>::cpp_type,
@@ -188,9 +209,9 @@ class RepeatedFieldRef<
         reflection->GetMessageFactory()->GetPrototype(field->message_type()));
   }
 
-  const void* data_;
-  const AccessorType* accessor_;
-  const T* default_instance_;
+  const void* PROTOBUF_NONNULL data_;
+  const AccessorType* PROTOBUF_NONNULL accessor_;
+  const T* PROTOBUF_NONNULL default_instance_;
 };
 
 // MutableRepeatedFieldRef definition for message types.
@@ -200,22 +221,26 @@ class MutableRepeatedFieldRef<
   typedef typename internal::RefTypeTraits<T>::AccessorType AccessorType;
 
  public:
-  bool empty() const { return accessor_->IsEmpty(data_); }
-  int size() const { return accessor_->Size(data_); }
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD bool empty() const {
+    return accessor_->IsEmpty(data_);
+  }
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD int size() const {
+    return accessor_->Size(data_);
+  }
   // See comments for RepeatedFieldRef<Message>::Get()
-  const T& Get(int index, T* scratch_space) const {
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD const T& Get(
+      int index, T* PROTOBUF_NULLABLE scratch_space) const {
     return *static_cast<const T*>(accessor_->Get(data_, index, scratch_space));
   }
   // Create a new message of the same type as the messages stored in this
   // repeated field. Caller takes ownership of the returned object.
-  T* NewMessage() const { return default_instance_->New(); }
+  T* PROTOBUF_NONNULL NewMessage() const { return default_instance_->New(); }
 
   void Set(int index, const T& value) const {
     accessor_->Set(data_, index, &value);
   }
   void Add(const T& value) const { accessor_->Add(data_, &value); }
   void RemoveLast() const { accessor_->RemoveLast(data_); }
-  void Reserve(int size) const { accessor_->Reserve(data_, size); }
   void SwapElements(int index1, int index2) const {
     accessor_->SwapElements(data_, index1, index2);
   }
@@ -240,8 +265,8 @@ class MutableRepeatedFieldRef<
 
  private:
   friend class Reflection;
-  MutableRepeatedFieldRef(MakeDependent<T, Message>* message,
-                          const FieldDescriptor* field) {
+  MutableRepeatedFieldRef(MakeDependent<T, Message>* PROTOBUF_NONNULL message,
+                          const FieldDescriptor* PROTOBUF_NONNULL field) {
     const auto* reflection = message->GetReflection();
     data_ = reflection->RepeatedFieldData(
         message, field, internal::RefTypeTraits<T>::cpp_type,
@@ -251,9 +276,9 @@ class MutableRepeatedFieldRef<
         reflection->GetMessageFactory()->GetPrototype(field->message_type()));
   }
 
-  void* data_;
-  const AccessorType* accessor_;
-  const T* default_instance_;
+  void* PROTOBUF_NONNULL data_;
+  const AccessorType* PROTOBUF_NONNULL accessor_;
+  const T* PROTOBUF_NONNULL default_instance_;
 };
 
 namespace internal {
@@ -289,50 +314,64 @@ class PROTOBUF_EXPORT RepeatedFieldAccessor {
   typedef void Value;
   typedef void Iterator;
 
-  virtual bool IsEmpty(const Field* data) const = 0;
-  virtual int Size(const Field* data) const = 0;
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD virtual bool IsEmpty(
+      const Field* PROTOBUF_NONNULL data) const = 0;
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD virtual int Size(
+      const Field* PROTOBUF_NONNULL data) const = 0;
   // Depends on the underlying representation of the repeated field, this
   // method can return a pointer to the underlying object if such an object
   // exists, or fill the data into scratch_space and return scratch_space.
   // Callers of this method must ensure scratch_space is a valid pointer
   // to a mutable object of the correct type.
-  virtual const Value* Get(const Field* data, int index,
-                           Value* scratch_space) const = 0;
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD virtual const Value* PROTOBUF_NONNULL
+  Get(const Field* PROTOBUF_NONNULL data, int index,
+      Value* PROTOBUF_NULLABLE scratch_space) const = 0;
 
-  virtual void Clear(Field* data) const = 0;
-  virtual void Set(Field* data, int index, const Value* value) const = 0;
-  virtual void Add(Field* data, const Value* value) const = 0;
-  virtual void RemoveLast(Field* data) const = 0;
-  virtual void Reserve(Field* data, int size) const = 0;
-  virtual void SwapElements(Field* data, int index1, int index2) const = 0;
-  virtual void Swap(Field* data, const RepeatedFieldAccessor* other_mutator,
-                    Field* other_data) const = 0;
+  virtual void Clear(Field* PROTOBUF_NONNULL data) const = 0;
+  virtual void Set(Field* PROTOBUF_NONNULL data, int index,
+                   const Value* PROTOBUF_NONNULL value) const = 0;
+  virtual void Add(Field* PROTOBUF_NONNULL data,
+                   const Value* PROTOBUF_NONNULL value) const = 0;
+  virtual void RemoveLast(Field* PROTOBUF_NONNULL data) const = 0;
+  virtual void SwapElements(Field* PROTOBUF_NONNULL data, int index1,
+                            int index2) const = 0;
+  virtual void Swap(Field* PROTOBUF_NONNULL data,
+                    const RepeatedFieldAccessor* PROTOBUF_NONNULL other_mutator,
+                    Field* PROTOBUF_NONNULL other_data) const = 0;
 
   // Create an iterator that points at the beginning of the repeated field.
-  virtual Iterator* BeginIterator(const Field* data) const = 0;
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD virtual Iterator* PROTOBUF_NULLABLE
+  BeginIterator(const Field* PROTOBUF_NONNULL data) const = 0;
   // Create an iterator that points at the end of the repeated field.
-  virtual Iterator* EndIterator(const Field* data) const = 0;
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD virtual Iterator* PROTOBUF_NULLABLE
+  EndIterator(const Field* PROTOBUF_NONNULL data) const = 0;
   // Make a copy of an iterator and return the new copy.
-  virtual Iterator* CopyIterator(const Field* data,
-                                 const Iterator* iterator) const = 0;
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD virtual Iterator* PROTOBUF_NULLABLE
+  CopyIterator(const Field* PROTOBUF_NONNULL data,
+               const Iterator* PROTOBUF_NULLABLE iterator) const = 0;
   // Move an iterator to point to the next element.
-  virtual Iterator* AdvanceIterator(const Field* data,
-                                    Iterator* iterator) const = 0;
+  virtual Iterator* PROTOBUF_NONNULL
+  AdvanceIterator(const Field* PROTOBUF_NONNULL data,
+                  Iterator* PROTOBUF_NULLABLE iterator) const = 0;
   // Compare whether two iterators point to the same element.
-  virtual bool EqualsIterator(const Field* data, const Iterator* a,
-                              const Iterator* b) const = 0;
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD virtual bool EqualsIterator(
+      const Field* PROTOBUF_NONNULL data, const Iterator* PROTOBUF_NULLABLE a,
+      const Iterator* PROTOBUF_NULLABLE b) const = 0;
   // Delete an iterator created by BeginIterator(), EndIterator() and
   // CopyIterator().
-  virtual void DeleteIterator(const Field* data, Iterator* iterator) const = 0;
+  virtual void DeleteIterator(const Field* PROTOBUF_NONNULL data,
+                              Iterator* PROTOBUF_NULLABLE iterator) const = 0;
   // Like Get() but for iterators.
-  virtual const Value* GetIteratorValue(const Field* data,
-                                        const Iterator* iterator,
-                                        Value* scratch_space) const = 0;
+  virtual const Value* PROTOBUF_NONNULL
+  GetIteratorValue(const Field* PROTOBUF_NONNULL data,
+                   const Iterator* PROTOBUF_NULLABLE iterator,
+                   Value* PROTOBUF_NULLABLE scratch_space) const = 0;
 
   // Templated methods that make using this interface easier for non-message
   // types.
   template <typename T>
-  T Get(const Field* data, int index) const {
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD T Get(const Field* PROTOBUF_NONNULL data,
+                                            int index) const {
     typedef typename RefTypeTraits<T>::AccessorValueType ActualType;
     ActualType scratch_space;
     return static_cast<T>(*reinterpret_cast<const ActualType*>(
@@ -340,7 +379,8 @@ class PROTOBUF_EXPORT RepeatedFieldAccessor {
   }
 
   template <typename T, typename ValueType>
-  void Set(Field* data, int index, const ValueType& value) const {
+  void Set(Field* PROTOBUF_NONNULL data, int index,
+           const ValueType& value) const {
     typedef typename RefTypeTraits<T>::AccessorValueType ActualType;
     // In this RepeatedFieldAccessor interface we pass/return data using
     // raw pointers. Type of the data these raw pointers point to should
@@ -354,7 +394,7 @@ class PROTOBUF_EXPORT RepeatedFieldAccessor {
   }
 
   template <typename T, typename ValueType>
-  void Add(Field* data, const ValueType& value) const {
+  void Add(Field* PROTOBUF_NONNULL data, const ValueType& value) const {
     typedef typename RefTypeTraits<T>::AccessorValueType ActualType;
     // In this RepeatedFieldAccessor interface we pass/return data using
     // raw pointers. Type of the data these raw pointers point to should
@@ -390,8 +430,9 @@ class RepeatedFieldRefIterator {
   using difference_type = std::ptrdiff_t;
 
   // Constructor for non-message fields.
-  RepeatedFieldRefIterator(const void* data,
-                           const RepeatedFieldAccessor* accessor, bool begin)
+  RepeatedFieldRefIterator(
+      const void* PROTOBUF_NONNULL data,
+      const RepeatedFieldAccessor* PROTOBUF_NONNULL accessor, bool begin)
       : data_(data),
         accessor_(accessor),
         iterator_(begin ? accessor->BeginIterator(data)
@@ -399,9 +440,10 @@ class RepeatedFieldRefIterator {
         // The end iterator must not be dereferenced, no need for scratch space.
         scratch_space_(begin ? new AccessorValueType : nullptr) {}
   // Constructor for message fields.
-  RepeatedFieldRefIterator(const void* data,
-                           const RepeatedFieldAccessor* accessor, bool begin,
-                           AccessorValueType* scratch_space)
+  RepeatedFieldRefIterator(
+      const void* PROTOBUF_NONNULL data,
+      const RepeatedFieldAccessor* PROTOBUF_NONNULL accessor, bool begin,
+      AccessorValueType* PROTOBUF_NULLABLE scratch_space)
       : data_(data),
         accessor_(accessor),
         iterator_(begin ? accessor->BeginIterator(data)
@@ -417,21 +459,23 @@ class RepeatedFieldRefIterator {
     iterator_ = accessor_->AdvanceIterator(data_, iterator_);
     return *this;
   }
-  IteratorValueType operator*() const {
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD IteratorValueType operator*() const {
     return static_cast<IteratorValueType>(
         *static_cast<const AccessorValueType*>(accessor_->GetIteratorValue(
             data_, iterator_, scratch_space_.get())));
   }
-  IteratorPointerType operator->() const {
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD IteratorPointerType operator->() const {
     return static_cast<IteratorPointerType>(
         accessor_->GetIteratorValue(data_, iterator_, scratch_space_.get()));
   }
-  bool operator!=(const RepeatedFieldRefIterator& other) const {
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD bool operator!=(
+      const RepeatedFieldRefIterator& other) const {
     assert(data_ == other.data_);
     assert(accessor_ == other.accessor_);
     return !accessor_->EqualsIterator(data_, iterator_, other.iterator_);
   }
-  bool operator==(const RepeatedFieldRefIterator& other) const {
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD bool operator==(
+      const RepeatedFieldRefIterator& other) const {
     return !this->operator!=(other);
   }
 
@@ -450,9 +494,9 @@ class RepeatedFieldRefIterator {
   }
 
  protected:
-  const void* data_;
-  const RepeatedFieldAccessor* accessor_;
-  void* iterator_;
+  const void* PROTOBUF_NONNULL data_;
+  const RepeatedFieldAccessor* PROTOBUF_NONNULL accessor_;
+  void* PROTOBUF_NULLABLE iterator_;
   std::unique_ptr<AccessorValueType> scratch_space_;
 };
 
@@ -489,7 +533,9 @@ struct RefTypeTraits<
   typedef T* IteratorPointerType;
   static constexpr FieldDescriptor::CppType cpp_type =
       PrimitiveTraits<T>::cpp_type;
-  static const Descriptor* GetMessageFieldDescriptor() { return nullptr; }
+  static const Descriptor* PROTOBUF_NULLABLE GetMessageFieldDescriptor() {
+    return nullptr;
+  }
 };
 
 template <typename T>
@@ -503,7 +549,9 @@ struct RefTypeTraits<
   typedef int32_t* IteratorPointerType;
   static constexpr FieldDescriptor::CppType cpp_type =
       FieldDescriptor::CPPTYPE_ENUM;
-  static const Descriptor* GetMessageFieldDescriptor() { return nullptr; }
+  static const Descriptor* PROTOBUF_NULLABLE GetMessageFieldDescriptor() {
+    return nullptr;
+  }
 };
 
 template <typename T>
@@ -516,18 +564,20 @@ struct RefTypeTraits<
   typedef const std::string* IteratorPointerType;
   static constexpr FieldDescriptor::CppType cpp_type =
       FieldDescriptor::CPPTYPE_STRING;
-  static const Descriptor* GetMessageFieldDescriptor() { return nullptr; }
+  static const Descriptor* PROTOBUF_NULLABLE GetMessageFieldDescriptor() {
+    return nullptr;
+  }
 };
 
 template <typename T>
 struct MessageDescriptorGetter {
-  static const Descriptor* get() {
+  static const Descriptor* PROTOBUF_NONNULL get() {
     return T::default_instance().GetDescriptor();
   }
 };
 template <>
 struct MessageDescriptorGetter<Message> {
-  static const Descriptor* get() { return nullptr; }
+  static const Descriptor* PROTOBUF_NULLABLE get() { return nullptr; }
 };
 
 template <typename T>
@@ -540,7 +590,7 @@ struct RefTypeTraits<
   typedef const T* IteratorPointerType;
   static constexpr FieldDescriptor::CppType cpp_type =
       FieldDescriptor::CPPTYPE_MESSAGE;
-  static const Descriptor* GetMessageFieldDescriptor() {
+  static const Descriptor* PROTOBUF_NULLABLE GetMessageFieldDescriptor() {
     return MessageDescriptorGetter<T>::get();
   }
 };

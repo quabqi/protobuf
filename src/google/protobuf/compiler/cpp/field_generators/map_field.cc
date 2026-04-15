@@ -5,12 +5,15 @@
 // license that can be found in the LICENSE file or at
 // https://developers.google.com/open-source/licenses/bsd
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "absl/log/absl_check.h"
 #include "absl/strings/ascii.h"
 #include "absl/strings/str_cat.h"
+#include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/substitute.h"
 #include "google/protobuf/compiler/cpp/field.h"
@@ -18,6 +21,10 @@
 #include "google/protobuf/compiler/cpp/options.h"
 #include "google/protobuf/descriptor.h"
 #include "google/protobuf/io/printer.h"
+#include "google/protobuf/port.h"
+
+// Must be included last.
+#include "google/protobuf/port_def.inc"
 
 namespace google {
 namespace protobuf {
@@ -46,7 +53,8 @@ std::vector<Sub> Vars(const FieldDescriptor* field, const Options& opts,
   }
 
   return {
-      {"Map", absl::Substitute("::google::protobuf::Map<$0, $1>", key_type, val_type)},
+      {"Map", absl::Substitute("::$2::Map<$0, $1>", key_type, val_type,
+                               ProtobufNamespace(opts))},
       {"Entry", ClassName(field->message_type(), false)},
       {"Key", PrimitiveTypeName(opts, key->cpp_type())},
       {"Val", val_type},
@@ -73,14 +81,13 @@ void EmitFuncs(const FieldDescriptor* field, io::Printer* p) {
 
 class Map : public FieldGeneratorBase {
  public:
-  Map(const FieldDescriptor* field, const Options& opts,
-      MessageSCCAnalyzer* scc)
-      : FieldGeneratorBase(field, opts, scc),
-        field_(field),
+  Map(const FieldDescriptor* field, const Options& opts)
+      : FieldGeneratorBase(field, opts),
         key_(field->message_type()->map_key()),
         val_(field->message_type()->map_value()),
         opts_(&opts),
-        has_required_(scc->HasRequiredFields(field->message_type())),
+        has_required_(
+            opts.scc_analyzer->HasRequiredFields(field->message_type())),
         lite_(!HasDescriptorMethods(field->file(), opts)) {}
   ~Map() override = default;
 
@@ -107,19 +114,20 @@ class Map : public FieldGeneratorBase {
   }
 
   void GenerateCopyConstructorCode(io::Printer* p) const override {
-    GenerateConstructorCode(p);
     GenerateMergingCode(p);
   }
 
   void GenerateIsInitialized(io::Printer* p) const override {
-    if (!has_required_) return;
+    if (!NeedsIsInitialized()) return;
 
     p->Emit(R"cc(
-      if (!$pbi$::AllAreInitialized($field_$)) {
+      if (!$pbi$::AllAreInitialized(this_.$field_$)) {
         return false;
       }
     )cc");
   }
+
+  bool NeedsIsInitialized() const override { return has_required_; }
 
   void GenerateConstexprAggregateInitializer(io::Printer* p) const override {
     p->Emit(R"cc(
@@ -150,8 +158,6 @@ class Map : public FieldGeneratorBase {
     }
   }
 
-  void GenerateConstructorCode(io::Printer* p) const override {}
-
   void GenerateDestructorCode(io::Printer* p) const override {
     if (should_split()) {
       p->Emit(R"cc(
@@ -168,7 +174,6 @@ class Map : public FieldGeneratorBase {
   void GenerateByteSize(io::Printer* p) const override;
 
  private:
-  const FieldDescriptor* field_;
   const FieldDescriptor* key_;
   const FieldDescriptor* val_;
   const Options* opts_;
@@ -188,10 +193,7 @@ void Map::GeneratePrivateMembers(io::Printer* p) const {
              {"kValType",
               absl::AsciiStrToUpper(DeclaredTypeMethodName(val_->type()))}},
             R"cc(
-              $pbi$::$MapField$<$Entry$, $Key$, $Val$,
-                                $pbi$::WireFormatLite::TYPE_$kKeyType$,
-                                $pbi$::WireFormatLite::TYPE_$kValType$>
-                  $name$_;
+              $pbi$::$MapField$<$Entry$, $Key$, $Val$> $name$_;
             )cc");
   }
 }
@@ -202,12 +204,12 @@ void Map::GenerateAccessorDeclarations(io::Printer* p) const {
   auto v2 = p->WithVars(AnnotatedAccessors(field_, {"mutable_"},
                                            io::AnnotationCollector::kAlias));
   p->Emit(R"cc(
-    $DEPRECATED$ const $Map$& $name$() const;
-    $DEPRECATED$ $Map$* $mutable_name$();
+    [[nodiscard]] $DEPRECATED$ const $Map$& $name$() const;
+    [[nodiscard]] $DEPRECATED$ $Map$* $nonnull$ $mutable_name$();
 
     private:
     const $Map$& $_internal_name$() const;
-    $Map$* $_internal_mutable_name$();
+    $Map$* $nonnull$ $_internal_mutable_name$();
 
     public:
   )cc");
@@ -215,30 +217,34 @@ void Map::GenerateAccessorDeclarations(io::Printer* p) const {
 
 void Map::GenerateInlineAccessorDefinitions(io::Printer* p) const {
   p->Emit(R"cc(
-    inline const $Map$& $Msg$::_internal_$name$() const {
+    inline const $Map$& $Msg$::_internal_$name_internal$() const {
       $TsanDetectConcurrentRead$;
       return $field_$.GetMap();
     }
   )cc");
   p->Emit(R"cc(
     inline const $Map$& $Msg$::$name$() const ABSL_ATTRIBUTE_LIFETIME_BOUND {
+      $WeakDescriptorSelfPin$;
       $annotate_get$;
       // @@protoc_insertion_point(field_map:$pkg.Msg.field$)
-      return _internal_$name$();
+      return _internal_$name_internal$();
     }
   )cc");
   p->Emit(R"cc(
-    inline $Map$* $Msg$::_internal_mutable_$name$() {
+    inline $Map$* $nonnull$ $Msg$::_internal_mutable_$name_internal$() {
       $PrepareSplitMessageForWrite$;
       $TsanDetectConcurrentMutation$;
       return $field_$.MutableMap();
     }
   )cc");
   p->Emit(R"cc(
-    inline $Map$* $Msg$::mutable_$name$() ABSL_ATTRIBUTE_LIFETIME_BOUND {
+    inline $Map$* $nonnull$ $Msg$::mutable_$name$()
+        ABSL_ATTRIBUTE_LIFETIME_BOUND {
+      $WeakDescriptorSelfPin$;
+      $set_hasbit$;
       $annotate_mutable$;
       // @@protoc_insertion_point(field_mutable_map:$pkg.Msg.field$)
-      return _internal_mutable_$name$();
+      return _internal_mutable_$name_internal$();
     }
   )cc");
 }
@@ -274,10 +280,10 @@ void Map::GenerateSerializeWithCachedSizesToArray(io::Printer* p) const {
            }},
       },
       R"cc(
-        if (!_internal_$name$().empty()) {
+        if (!this_._internal_$name$().empty()) {
           using MapType = $Map$;
           using WireHelper = $Funcs$;
-          const auto& field = _internal_$name$();
+          const auto& field = this_._internal_$name$();
 
           if (stream->IsSerializationDeterministic() && field.size() > 1) {
             for (const auto& entry : $pbi$::$Sorter$<MapType>(field)) {
@@ -302,21 +308,24 @@ void Map::GenerateByteSize(io::Printer* p) const {
           {"Funcs", [&] { EmitFuncs(field_, p); }},
       },
       R"cc(
-        total_size += $kTagBytes$ * $pbi$::FromIntSize(_internal_$name$_size());
-        for (const auto& entry : _internal_$name$()) {
+        total_size +=
+            $kTagBytes$ * $pbi$::FromIntSize(this_._internal_$name$_size());
+        for (const auto& entry : this_._internal_$name$()) {
           total_size += $Funcs$::ByteSizeLong(entry.first, entry.second);
         }
       )cc");
 }
+
 }  // namespace
 
 std::unique_ptr<FieldGeneratorBase> MakeMapGenerator(
-    const FieldDescriptor* desc, const Options& options,
-    MessageSCCAnalyzer* scc) {
-  return std::make_unique<Map>(desc, options, scc);
+    const FieldDescriptor* desc, const Options& options) {
+  return std::make_unique<Map>(desc, options);
 }
 
 }  // namespace cpp
 }  // namespace compiler
 }  // namespace protobuf
 }  // namespace google
+
+#include "google/protobuf/port_undef.inc"

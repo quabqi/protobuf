@@ -14,15 +14,16 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
+#include "absl/status/status.h"
 #include "absl/strings/string_view.h"
-#include "google/protobuf/compiler/java/generator.h"
-#include "google/protobuf/compiler/java/java_features.pb.h"
 #include "google/protobuf/compiler/java/names.h"
 #include "google/protobuf/compiler/java/options.h"
 #include "google/protobuf/descriptor.h"
 #include "google/protobuf/descriptor.pb.h"
 #include "google/protobuf/io/printer.h"
+
 
 // Must be last.
 #include "google/protobuf/port_def.inc"
@@ -61,7 +62,8 @@ void PrintEnumVerifierLogic(
 
 // Prints the Protobuf Java Version validator checking that the runtime and
 // gencode versions are compatible.
-void PrintGencodeVersionValidator(io::Printer* printer);
+void PrintGencodeVersionValidator(io::Printer* printer, bool oss_runtime,
+                                  absl::string_view java_class_name);
 
 // Converts a name to camel-case. If cap_first_letter is true, capitalize the
 // first letter.
@@ -79,8 +81,7 @@ std::string UniqueFileScopeIdentifier(const Descriptor* descriptor);
 // Gets the unqualified class name for the file.  For each .proto file, there
 // will be one Java class containing all the immutable messages and another
 // Java class containing all the mutable messages.
-// TODO: remove the default value after updating client code.
-std::string FileClassName(const FileDescriptor* file, bool immutable = true);
+std::string FileClassName(const FileDescriptor* file, bool immutable);
 
 // Returns the file's Java package name.
 std::string FileJavaPackage(const FileDescriptor* file, bool immutable,
@@ -110,7 +111,7 @@ std::string ExtraMessageOrBuilderInterfaces(const Descriptor* descriptor);
 // Get the unqualified Java class name for mutable messages. i.e. without
 // package or outer classnames.
 inline std::string ShortMutableJavaClassName(const Descriptor* descriptor) {
-  return descriptor->name();
+  return std::string(descriptor->name());
 }
 
 // Whether the given descriptor is for one of the core descriptor protos. We
@@ -141,25 +142,31 @@ inline Proto1EnumRepresentation GetProto1EnumRepresentation(
   return Proto1EnumRepresentation::kInteger;
 }
 
-// Whether we should generate multiple java files for messages.
-inline bool MultipleJavaFiles(const FileDescriptor* descriptor,
-                              bool immutable) {
-  (void)immutable;
-  return descriptor->options().java_multiple_files();
-}
+absl::Status ValidateNestInFileClassFeature(const Descriptor& descriptor);
+absl::Status ValidateNestInFileClassFeature(const EnumDescriptor& descriptor);
+
+// Returns true if the generated class for the type is nested in the generated
+// proto file Java class.
+// `immutable` should be set to true if we're generating for the immutable API.
+bool NestedInFileClass(const Descriptor& descriptor, bool immutable);
+bool NestedInFileClass(const EnumDescriptor& descriptor, bool immutable);
+bool NestedInFileClass(const ServiceDescriptor& descriptor, bool immutable);
 
 
 // Returns true if `descriptor` will be written to its own .java file.
 // `immutable` should be set to true if we're generating for the immutable API.
+// For nested messages, this always returns false, since their generated Java
+// class is always nested in their parent message's Java class i.e. they never
+// have their own standalone Java file.
 template <typename Descriptor>
 bool IsOwnFile(const Descriptor* descriptor, bool immutable) {
-  return descriptor->containing_type() == NULL &&
-         MultipleJavaFiles(descriptor->file(), immutable);
+  return descriptor->containing_type() == nullptr &&
+         !NestedInFileClass(*descriptor, immutable);
 }
 
 template <>
 inline bool IsOwnFile(const ServiceDescriptor* descriptor, bool immutable) {
-  return MultipleJavaFiles(descriptor->file(), immutable);
+  return !NestedInFileClass(*descriptor, immutable);
 }
 
 // If `descriptor` describes an object with its own .java file,
@@ -209,7 +216,7 @@ absl::string_view KotlinTypeName(JavaType type);
 // Get the name of the java enum constant representing this type. E.g.,
 // "INT32" for FieldDescriptor::TYPE_INT32. The enum constant's full
 // name is "com.google.protobuf.WireFormat.FieldType.INT32".
-absl::string_view FieldTypeName(const FieldDescriptor::Type field_type);
+absl::string_view FieldTypeName(FieldDescriptor::Type field_type);
 
 class ClassNameResolver;
 std::string DefaultValue(const FieldDescriptor* field, bool immutable,
@@ -319,9 +326,9 @@ struct ExtensionRangeOrdering {
   }
 };
 
-// Sort the fields of the given Descriptor by number into a new[]'d array
-// and return it. The caller should delete the returned array.
-const FieldDescriptor** SortFieldsByNumber(const Descriptor* descriptor);
+// Sort the fields of the given Descriptor by number into the vector.
+std::vector<const FieldDescriptor*> SortFieldsByNumber(
+    const Descriptor* descriptor);
 
 // Does this message class have any packed fields?
 inline bool HasPackedFields(const Descriptor* descriptor) {
@@ -340,19 +347,7 @@ bool HasRequiredFields(const Descriptor* descriptor);
 bool IsRealOneof(const FieldDescriptor* descriptor);
 
 inline bool HasHasbit(const FieldDescriptor* descriptor) {
-  return internal::cpp::HasHasbit(descriptor);
-}
-
-// Whether unknown enum values are kept (i.e., not stored in UnknownFieldSet
-// but in the message and can be queried using additional getters that return
-// ints.
-inline bool SupportUnknownEnumValue(const FieldDescriptor* field) {
-  if (JavaGenerator::GetResolvedSourceFeatures(*field)
-          .GetExtension(pb::java)
-          .legacy_closed_enum()) {
-    return false;
-  }
-  return field->enum_type() != nullptr && !field->enum_type()->is_closed();
+  return descriptor->has_presence() && !descriptor->real_containing_oneof();
 }
 
 // Check whether a message has repeated fields.
@@ -374,22 +369,6 @@ inline bool IsWrappersProtoFile(const FileDescriptor* descriptor) {
   return descriptor->name() == "google/protobuf/wrappers.proto";
 }
 
-inline bool CheckUtf8(const FieldDescriptor* descriptor) {
-  if (JavaGenerator::GetResolvedSourceFeatures(*descriptor)
-          .GetExtension(pb::java)
-          .utf8_validation() == pb::JavaFeatures::VERIFY) {
-    return true;
-  }
-  return JavaGenerator::GetResolvedSourceFeatures(*descriptor)
-                 .utf8_validation() == FeatureSet::VERIFY ||
-         // For legacy syntax. This is not allowed under Editions.
-         descriptor->file()->options().java_string_check_utf8();
-}
-
-inline std::string GeneratedCodeVersionSuffix() {
-  return "V3";
-}
-
 void WriteUInt32ToUtf16CharSequence(uint32_t number,
                                     std::vector<uint16_t>* output);
 
@@ -401,16 +380,6 @@ inline void WriteIntToUtf16CharSequence(int value,
 // Escape a UTF-16 character so it can be embedded in a Java string literal.
 void EscapeUtf16ToString(uint16_t code, std::string* output);
 
-// Only the lowest two bytes of the return value are used. The lowest byte
-// is the integer value of a j/c/g/protobuf/FieldType enum. For the other
-// byte:
-//    bit 0: whether the field is required.
-//    bit 1: whether the field requires UTF-8 validation.
-//    bit 2: whether the field needs isInitialized check.
-//    bit 3: whether the field is a map field with proto2 enum value.
-//    bits 4-7: unused
-int GetExperimentalJavaFieldType(const FieldDescriptor* field);
-
 // To get the total number of entries need to be built for experimental runtime
 // and the first field number that are not in the table part
 std::pair<int, int> GetTableDrivenNumberOfEntriesAndLookUpStartFieldNumber(
@@ -419,6 +388,24 @@ std::pair<int, int> GetTableDrivenNumberOfEntriesAndLookUpStartFieldNumber(
 const FieldDescriptor* MapKeyField(const FieldDescriptor* descriptor);
 
 const FieldDescriptor* MapValueField(const FieldDescriptor* descriptor);
+
+inline std::string JvmSynthetic(bool jvm_dsl) {
+  return jvm_dsl ? "@kotlin.jvm.JvmSynthetic\n" : "";
+}
+
+struct JvmNameContext {
+  const Options& options;
+  io::Printer* printer;
+  bool lite = true;
+};
+
+inline void JvmName(absl::string_view name, const JvmNameContext& context) {
+  if (context.lite && !context.options.jvm_dsl) return;
+  context.printer->Emit("@kotlin.jvm.JvmName(\"");
+  // Note: `name` will likely have vars in it that we do want to interpolate.
+  context.printer->Emit(name);
+  context.printer->Emit("\")\n");
+}
 
 }  // namespace java
 }  // namespace compiler

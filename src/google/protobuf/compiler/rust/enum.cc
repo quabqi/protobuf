@@ -17,16 +17,16 @@
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/log/absl_check.h"
-#include "absl/strings/ascii.h"
-#include "absl/strings/match.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
-#include "absl/strings/strip.h"
 #include "absl/types/span.h"
-#include "google/protobuf/compiler/cpp/helpers.h"
+#include "google/protobuf/compiler/cpp/names.h"
 #include "google/protobuf/compiler/rust/context.h"
+#include "google/protobuf/compiler/rust/naming.h"
 #include "google/protobuf/descriptor.h"
+#include "google/protobuf/io/printer.h"
+#include "upb/reflection/def.hpp"
 
 namespace google {
 namespace protobuf {
@@ -34,40 +34,75 @@ namespace compiler {
 namespace rust {
 
 namespace {
-
-std::string enumName(const EnumDescriptor& desc) {
-  return cpp::UnderscoresToCamelCase(desc.name(), /*cap first letter=*/true);
-}
+using Sub = ::google::protobuf::io::Printer::Sub;
 
 // Constructs input for `EnumValues` from an enum descriptor.
-std::vector<std::pair<absl::string_view, int32_t>> enumValuesInput(
-    const EnumDescriptor& desc) {
-  std::vector<std::pair<absl::string_view, int32_t>> result;
+std::vector<EnumValueInput> EnumValuesInput(const EnumDescriptor& desc) {
+  std::vector<EnumValueInput> result;
   result.reserve(static_cast<size_t>(desc.value_count()));
 
   for (int i = 0; i < desc.value_count(); ++i) {
-    result.emplace_back(desc.value(i)->name(), desc.value(i)->number());
+    result.emplace_back(EnumValueInput{desc.value(i)->name(),
+                                       desc.value(i)->number(), desc.value(i)});
   }
 
   return result;
 }
 
+void TypeConversions(Context& ctx, const EnumDescriptor& desc) {
+  if (ctx.is_cpp()) {
+    ctx.Emit(
+        R"rs(
+          impl $pbr$::CppMapTypeConversions for $name$ {
+              fn get_prototype() -> $pbr$::FfiMapValue {
+                  Self::to_map_value(Self::default())
+              }
+
+              fn to_map_value(self) -> $pbr$::FfiMapValue {
+                  $pbr$::FfiMapValue::make_u32(self.0 as u32)
+              }
+
+              unsafe fn from_map_value<'a>(value: $pbr$::FfiMapValue) -> $pb$::View<'a, Self> {
+                  debug_assert_eq!(value.tag, $pbr$::FfiMapValueTag::U32);
+                  $name$(unsafe { value.val.u as i32 })
+              }
+          }
+          )rs");
+  }
+  ctx.Emit(R"rs(
+        impl $pbi$::EntityType for $name$ {
+            type Tag = $pbi$::entity_tag::EnumTag;
+        }
+        )rs");
+}
+
+void MiniTable(Context& ctx, const EnumDescriptor& desc,
+               upb::EnumDefPtr upb_enum) {
+  if (ctx.is_cpp() || !desc.is_closed()) {
+    return;
+  }
+  std::string mini_descriptor = upb_enum.MiniDescriptorEncode();
+  ctx.Emit({{"mini_descriptor", mini_descriptor},
+            {"mini_descriptor_length", mini_descriptor.size()}},
+           R"rs(
+    unsafe impl $pbr$::AssociatedMiniTableEnum for $name$ {
+      fn mini_table() -> $pbr$::MiniTableEnumPtr {
+        static MINI_TABLE: $std$::sync::OnceLock<$pbr$::MiniTableEnumInitPtr> =
+            $std$::sync::OnceLock::new();
+        MINI_TABLE.get_or_init(|| unsafe {
+          $pbr$::MiniTableEnumInitPtr(
+              $pbr$::build_enum_mini_table("$mini_descriptor$"))
+        }).0
+      }
+    }
+  )rs");
+}
+
 }  // namespace
 
-std::vector<RustEnumValue> EnumValues(
-    absl::string_view enum_name,
-    absl::Span<const std::pair<absl::string_view, int32_t>> values) {
-  // Enum values may have a prefix of the name of the enum stripped from the
-  // value names in the gencode. This prefix is flexible:
-  // - It can be the original enum name, the name as UpperCamel, or snake_case.
-  // - The stripped prefix may also end in an underscore.
-
-  // The set of prefixes that will be stripped.
-  std::initializer_list<std::string> prefixes = {
-      std::string(enum_name),
-      ScreamingSnakeToUpperCamelCase(enum_name),
-      CamelToSnakeCase(enum_name),
-  };
+std::vector<RustEnumValue> EnumValues(absl::string_view enum_name,
+                                      absl::Span<const EnumValueInput> values) {
+  MultiCasePrefixStripper stripper(enum_name);
 
   absl::flat_hash_set<std::string> seen_by_name;
   absl::flat_hash_map<int32_t, RustEnumValue*> seen_by_number;
@@ -79,32 +114,9 @@ std::vector<RustEnumValue> EnumValues(
   seen_by_number.reserve(values.size());
 
   for (const auto& name_and_number : values) {
-    absl::string_view base_value_name = name_and_number.first;
-    for (absl::string_view prefix : prefixes) {
-      if (absl::StartsWithIgnoreCase(base_value_name, prefix)) {
-        base_value_name.remove_prefix(prefix.size());
-
-        // Also strip a joining underscore, if present.
-        absl::ConsumePrefix(&base_value_name, "_");
-
-        // Only strip one prefix.
-        break;
-      }
-    }
-
-    if (base_value_name.empty()) {
-      // The enum value name has a similar name to the enum - don't strip.
-      base_value_name = name_and_number.first;
-    }
-
-    int32_t number = name_and_number.second;
+    int32_t number = name_and_number.number;
     std::string rust_value_name =
-        ScreamingSnakeToUpperCamelCase(base_value_name);
-
-    // Invalid identifiers are prefixed with `_`.
-    if (absl::ascii_isdigit(rust_value_name[0])) {
-      rust_value_name = absl::StrCat("_", rust_value_name);
-    }
+        EnumValueRsName(stripper, name_and_number.name);
 
     if (seen_by_name.contains(rust_value_name)) {
       // Don't add an alias with the same normalized name.
@@ -114,11 +126,13 @@ std::vector<RustEnumValue> EnumValues(
     auto it_and_inserted = seen_by_number.try_emplace(number);
     if (it_and_inserted.second) {
       // This is the first value with this number; this name is canonical.
-      result.push_back(RustEnumValue{rust_value_name, number});
+      result.push_back(
+          RustEnumValue{rust_value_name, name_and_number.desc, number});
       it_and_inserted.first->second = &result.back();
     } else {
       // This number has been seen before; this name is an alias.
-      it_and_inserted.first->second->aliases.push_back(rust_value_name);
+      it_and_inserted.first->second->aliases.push_back(
+          {rust_value_name, name_and_number.desc});
     }
 
     seen_by_name.insert(std::move(rust_value_name));
@@ -126,91 +140,79 @@ std::vector<RustEnumValue> EnumValues(
   return result;
 }
 
-std::string CamelToSnakeCase(absl::string_view input) {
-  std::string result;
-  result.reserve(input.size() + 4);  // No reallocation for 4 _
-  bool is_first_character = true;
-  bool last_char_was_underscore = false;
-  for (const char c : input) {
-    if (!is_first_character && absl::ascii_isupper(c) &&
-        !last_char_was_underscore) {
-      result += '_';
-    }
-    last_char_was_underscore = c == '_';
-    result += absl::ascii_tolower(c);
-    is_first_character = false;
-  }
-  return result;
-}
-
-std::string ScreamingSnakeToUpperCamelCase(absl::string_view input) {
-  std::string result;
-  bool cap_next_letter = true;
-  for (const char c : input) {
-    if (absl::ascii_isalpha(c)) {
-      if (cap_next_letter) {
-        result += absl::ascii_toupper(c);
-      } else {
-        result += absl::ascii_tolower(c);
-      }
-      cap_next_letter = false;
-    } else if (absl::ascii_isdigit(c)) {
-      result += c;
-      cap_next_letter = true;
-    } else {
-      cap_next_letter = true;
-    }
-  }
-  return result;
-}
-
-void GenerateEnumDefinition(Context& ctx, const EnumDescriptor& desc) {
-  std::string name = enumName(desc);
+void GenerateEnumDefinition(Context& ctx, const EnumDescriptor& desc,
+                            upb::EnumDefPtr upb_enum) {
+  std::string name = EnumRsName(desc);
   ABSL_CHECK(desc.value_count() > 0);
   std::vector<RustEnumValue> values =
-      EnumValues(desc.name(), enumValuesInput(desc));
+      EnumValues(desc.name(), EnumValuesInput(desc));
   ABSL_CHECK(!values.empty());
 
   ctx.Emit(
       {
           {"name", name},
+          Sub("definition_name", name).AnnotatedAs(&desc),
           {"variants",
            [&] {
              for (const auto& value : values) {
                std::string number_str = absl::StrCat(value.number);
                // TODO: Replace with open enum variants when stable
-               ctx.Emit({{"variant_name", value.name}, {"number", number_str}},
-                        R"rs(
+               ctx.Emit(
+                   {Sub("variant_name", value.name).AnnotatedAs(value.desc),
+                    {"number", number_str}},
+                   R"rs(
                     pub const $variant_name$: $name$ = $name$($number$);
                     )rs");
-               for (const auto& alias : value.aliases) {
-                 ctx.Emit({{"alias_name", alias}, {"number", number_str}},
+               for (const auto& [alias, alias_desc] : value.aliases) {
+                 ctx.Emit({Sub("alias_name", alias).AnnotatedAs(alias_desc),
+                           {"number", number_str}},
                           R"rs(
                             pub const $alias_name$: $name$ = $name$($number$);
                             )rs");
                }
              }
            }},
+          {"constant_name_fn",
+           [&] {
+             ctx.Emit({{"name_cases",
+                        [&] {
+                          for (const auto& value : values) {
+                            std::string number_str = absl::StrCat(value.number);
+                            ctx.Emit({{"variant_name", value.name},
+                                      {"number", number_str}},
+                                     R"rs(
+                              $number$ => "$variant_name$",
+                            )rs");
+                          }
+                        }}},
+                      R"rs(
+                fn constant_name(&self) -> $Option$<&'static str> {
+                  #[allow(unreachable_patterns)] // In the case of aliases, just emit them all and let the first one match.
+                  Some(match self.0 {
+                    $name_cases$
+                    _ => return None
+                  })
+                }
+              )rs");
+           }},
           // The default value of an enum is the first listed value.
           // The compiler checks that this is equal to 0 for open enums.
           {"default_int_value", absl::StrCat(desc.value(0)->number())},
+          {"known_values_pattern",
+           // TODO: Check validity in UPB/C++.
+           absl::StrJoin(values, "|",
+                         [](std::string* o, const RustEnumValue& val) {
+                           absl::StrAppend(o, val.number);
+                         })},
           {"impl_from_i32",
            [&] {
              if (desc.is_closed()) {
-               ctx.Emit({{"name", name},
-                         {"known_values_pattern",
-                          // TODO: Check validity in UPB/C++.
-                          absl::StrJoin(
-                              values, "|",
-                              [](std::string* o, const RustEnumValue& val) {
-                                absl::StrAppend(o, val.number);
-                              })}},
-                        R"rs(
+               ctx.Emit(R"rs(
               impl $std$::convert::TryFrom<i32> for $name$ {
                 type Error = $pb$::UnknownEnumValue<Self>;
 
-                fn try_from(val: i32) -> Result<$name$, Self::Error> {
-                  if matches!(val, $known_values_pattern$) {
+                fn try_from(val: i32) -> $Result$<$name$, Self::Error> {
+                  if <Self as $pbi$::Enum>::is_known(val) {
                     Ok(Self(val))
                   } else {
                     Err($pb$::UnknownEnumValue::new($pbi$::Private, val))
@@ -219,7 +221,7 @@ void GenerateEnumDefinition(Context& ctx, const EnumDescriptor& desc) {
               }
             )rs");
              } else {
-               ctx.Emit({{"name", name}}, R"rs(
+               ctx.Emit(R"rs(
               impl $std$::convert::From<i32> for $name$ {
                 fn from(val: i32) -> $name$ {
                   Self(val)
@@ -228,15 +230,19 @@ void GenerateEnumDefinition(Context& ctx, const EnumDescriptor& desc) {
             )rs");
              }
            }},
+          {"type_conversions_impl", [&] { TypeConversions(ctx, desc); }},
+          {"mini_table", [&] { MiniTable(ctx, desc, upb_enum); }},
       },
       R"rs(
       #[repr(transparent)]
-      #[derive(Clone, Copy, PartialEq, Eq)]
-      pub struct $name$(i32);
+      #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+      pub struct $definition_name$(i32);
 
       #[allow(non_upper_case_globals)]
       impl $name$ {
         $variants$
+
+        $constant_name_fn$
       }
 
       impl $std$::convert::From<$name$> for i32 {
@@ -255,74 +261,89 @@ void GenerateEnumDefinition(Context& ctx, const EnumDescriptor& desc) {
 
       impl $std$::fmt::Debug for $name$ {
         fn fmt(&self, f: &mut $std$::fmt::Formatter<'_>) -> $std$::fmt::Result {
-          f.debug_tuple(stringify!($name$)).field(&self.0).finish()
+          if let Some(constant_name) = self.constant_name() {
+            write!(f, "$name$::{}", constant_name)
+          } else {
+            write!(f, "$name$::from({})", self.0)
+          }
         }
       }
 
-      impl $pb$::Proxied for $name$ {
-        type View<'a> = $name$;
-        type Mut<'a> = $pb$::PrimitiveMut<'a, $name$>;
+      impl $pb$::IntoProxied<i32> for $name$ {
+        fn into_proxied(self, _: $pbi$::Private) -> i32 {
+          self.0
+        }
       }
 
-      impl $pb$::ViewProxy<'_> for $name$ {
+      impl $pbi$::SealedInternal for $name$ {}
+
+      impl $pb$::Proxied for $name$ {
+        type View<'a> = $name$;
+      }
+
+      impl $pb$::AsView for $name$ {
         type Proxied = $name$;
 
         fn as_view(&self) -> $name$ {
           *self
         }
+      }
 
-        fn into_view<'shorter>(self) -> $pb$::View<'shorter, $name$> {
+      impl<'msg> $pb$::IntoView<'msg> for $name$ {
+        fn into_view<'shorter>(self) -> $name$ where 'msg: 'shorter {
           self
         }
       }
 
-      impl $pb$::SettableValue<$name$> for $name$ {
-        fn set_on<'msg>(
-            self,
-            private: $pbi$::Private,
-            mut mutator: $pb$::Mut<'msg, $name$>
-        ) where $name$: 'msg {
-          mutator.set_primitive(private, self)
+      // SAFETY: this is an enum type
+      unsafe impl $pbi$::Enum for $name$ {
+        const NAME: &'static str = "$name$";
+
+        fn is_known(value: i32) -> bool {
+          matches!(value, $known_values_pattern$)
         }
       }
 
-      impl $pb$::ProxiedWithPresence for $name$ {
-        type PresentMutData<'a> = $pbi$::RawVTableOptionalMutatorData<'a, $name$>;
-        type AbsentMutData<'a> = $pbi$::RawVTableOptionalMutatorData<'a, $name$>;
+      $type_conversions_impl$
 
-        fn clear_present_field(
-          present_mutator: Self::PresentMutData<'_>,
-        ) -> Self::AbsentMutData<'_> {
-          present_mutator.clear($pbi$::Private)
+      $mini_table$
+      )rs");
+
+  if (ctx.is_cpp()) {
+    ctx.Emit(
+        {
+            {"name", name},
+        },
+        R"rs(
+      unsafe impl $pb$::Singular for $name$ {
+        fn repeated_new(_private: $pbi$::Private) -> $pb$::Repeated<Self> {
+          $pbr$::new_enum_repeated()
         }
 
-        fn set_absent_to_default(
-          absent_mutator: Self::AbsentMutData<'_>,
-        ) -> Self::PresentMutData<'_> {
-          absent_mutator.set_absent_to_default($pbi$::Private)
-        }
-      }
-
-      unsafe impl $pb$::ProxiedInRepeated for $name$ {
-        fn repeated_len(r: $pb$::View<$pb$::Repeated<Self>>) -> usize {
-          $pbr$::cast_enum_repeated_view($pbi$::Private, r).len()
+        unsafe fn repeated_free(_private: $pbi$::Private, f: &mut $pb$::Repeated<Self>) {
+          unsafe { $pbr$::free_enum_repeated(f) }
         }
 
-        fn repeated_push(r: $pb$::Mut<$pb$::Repeated<Self>>, val: $name$) {
-          $pbr$::cast_enum_repeated_mut($pbi$::Private, r).push(val.into())
+        fn repeated_len(_private: $pbi$::Private, r: $pb$::View<$pb$::Repeated<Self>>) -> usize {
+          $pbr$::cast_enum_repeated_view(r).len()
         }
 
-        fn repeated_clear(r: $pb$::Mut<$pb$::Repeated<Self>>) {
-          $pbr$::cast_enum_repeated_mut($pbi$::Private, r).clear()
+        fn repeated_push(_private: $pbi$::Private, r: $pb$::Mut<$pb$::Repeated<Self>>, val: impl $pb$::IntoProxied<$name$>) {
+          $pbr$::cast_enum_repeated_mut(r).push(val.into_proxied($pbi$::Private))
+        }
+
+        fn repeated_clear(_private: $pbi$::Private, r: $pb$::Mut<$pb$::Repeated<Self>>) {
+          $pbr$::cast_enum_repeated_mut(r).clear()
         }
 
         unsafe fn repeated_get_unchecked(
+            _private: $pbi$::Private,
             r: $pb$::View<$pb$::Repeated<Self>>,
             index: usize,
         ) -> $pb$::View<$name$> {
           // SAFETY: In-bounds as promised by the caller.
           unsafe {
-            $pbr$::cast_enum_repeated_view($pbi$::Private, r)
+            $pbr$::cast_enum_repeated_view(r)
               .get_unchecked(index)
               .try_into()
               .unwrap_unchecked()
@@ -330,33 +351,39 @@ void GenerateEnumDefinition(Context& ctx, const EnumDescriptor& desc) {
         }
 
         unsafe fn repeated_set_unchecked(
+            _private: $pbi$::Private,
             r: $pb$::Mut<$pb$::Repeated<Self>>,
             index: usize,
-            val: $name$,
+            val: impl $pb$::IntoProxied<$name$>,
         ) {
           // SAFETY: In-bounds as promised by the caller.
           unsafe {
-            $pbr$::cast_enum_repeated_mut($pbi$::Private, r)
-              .set_unchecked(index, val.into())
+            $pbr$::cast_enum_repeated_mut(r)
+              .set_unchecked(index, val.into_proxied($pbi$::Private))
           }
         }
 
         fn repeated_copy_from(
+            _private: $pbi$::Private,
             src: $pb$::View<$pb$::Repeated<Self>>,
             dest: $pb$::Mut<$pb$::Repeated<Self>>,
         ) {
-          $pbr$::cast_enum_repeated_mut($pbi$::Private, dest)
-            .copy_from($pbr$::cast_enum_repeated_view($pbi$::Private, src))
+          $pbr$::cast_enum_repeated_mut(dest)
+            .copy_from($pbr$::cast_enum_repeated_view(src))
+        }
+
+        fn repeated_reserve(
+            _private: $pbi$::Private,
+            r: $pb$::Mut<$pb$::Repeated<Self>>,
+            additional: usize,
+        ) {
+            // SAFETY:
+            // - `f.as_raw()` is valid.
+            $pbr$::reserve_enum_repeated_mut(r, additional);
         }
       }
-
-      impl $pbi$::PrimitiveWithRawVTable for $name$ {}
-
-      // SAFETY: this is an enum type
-      unsafe impl $pbi$::Enum for $name$ {
-        const NAME: &'static str = "$name$";
-      }
-      )rs");
+        )rs");
+  }
 }
 
 }  // namespace rust

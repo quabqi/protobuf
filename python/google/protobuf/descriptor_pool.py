@@ -47,22 +47,6 @@ from google.protobuf.internal import python_message
 _USE_C_DESCRIPTORS = descriptor._USE_C_DESCRIPTORS  # pylint: disable=protected-access
 
 
-def _Deprecated(func):
-  """Mark functions as deprecated."""
-
-  def NewFunc(*args, **kwargs):
-    warnings.warn(
-        'Call to deprecated function %s(). Note: Do add unlinked descriptors '
-        'to descriptor_pool is wrong. Please use Add() or AddSerializedFile() '
-        'instead. This function will be removed soon.' % func.__name__,
-        category=DeprecationWarning)
-    return func(*args, **kwargs)
-  NewFunc.__name__ = func.__name__
-  NewFunc.__doc__ = func.__doc__
-  NewFunc.__dict__.update(func.__dict__)
-  return NewFunc
-
-
 def _NormalizeFullyQualifiedName(name):
   """Remove leading period from fully-qualified type name.
 
@@ -91,7 +75,8 @@ def _IsMessageSetExtension(field):
           field.containing_type.has_options and
           field.containing_type.GetOptions().message_set_wire_format and
           field.type == descriptor.FieldDescriptor.TYPE_MESSAGE and
-          field.label == descriptor.FieldDescriptor.LABEL_OPTIONAL)
+          not field.is_required and
+          not field.is_repeated)
 
 _edition_defaults_lock = threading.Lock()
 
@@ -101,9 +86,9 @@ class DescriptorPool(object):
 
   if _USE_C_DESCRIPTORS:
 
-   def __new__(cls, descriptor_db=None):
-     # pylint: disable=protected-access
-     return descriptor._message.DescriptorPool(descriptor_db)
+     def __new__(cls, descriptor_db=None):
+       # pylint: disable=protected-access
+       return descriptor._message.DescriptorPool(descriptor_db)
 
   def __init__(
       self, descriptor_db=None, use_deprecated_legacy_json_field_conflicts=False
@@ -207,12 +192,6 @@ class DescriptorPool(object):
     file_desc.serialized_pb = serialized_file_desc_proto
     return file_desc
 
-  # Add Descriptor to descriptor pool is deprecated. Please use Add()
-  # or AddSerializedFile() to add a FileDescriptorProto instead.
-  @_Deprecated
-  def AddDescriptor(self, desc):
-    self._AddDescriptor(desc)
-
   # Never call this method. It is for internal usage only.
   def _AddDescriptor(self, desc):
     """Adds a Descriptor to the pool, non-recursively.
@@ -267,12 +246,6 @@ class DescriptorPool(object):
         self._top_enum_values[full_name] = enum_value
     self._AddFileDescriptor(enum_desc.file)
 
-  # Add ServiceDescriptor to descriptor pool is deprecated. Please use Add()
-  # or AddSerializedFile() to add a FileDescriptorProto instead.
-  @_Deprecated
-  def AddServiceDescriptor(self, service_desc):
-    self._AddServiceDescriptor(service_desc)
-
   # Never call this method. It is for internal usage only.
   def _AddServiceDescriptor(self, service_desc):
     """Adds a ServiceDescriptor to the pool.
@@ -287,12 +260,6 @@ class DescriptorPool(object):
     self._CheckConflictRegister(service_desc, service_desc.full_name,
                                 service_desc.file.name)
     self._service_descriptors[service_desc.full_name] = service_desc
-
-  # Add ExtensionDescriptor to descriptor pool is deprecated. Please use Add()
-  # or AddSerializedFile() to add a FileDescriptorProto instead.
-  @_Deprecated
-  def AddExtensionDescriptor(self, extension):
-    self._AddExtensionDescriptor(extension)
 
   # Never call this method. It is for internal usage only.
   def _AddExtensionDescriptor(self, extension):
@@ -342,10 +309,6 @@ class DescriptorPool(object):
     if hasattr(extension.containing_type, '_concrete_class'):
       python_message._AttachFieldHelpers(
           extension.containing_type._concrete_class, extension)
-
-  @_Deprecated
-  def AddFileDescriptor(self, file_desc):
-    self._InternalAddFileDescriptor(file_desc)
 
   # Never call this method. It is for internal usage only.
   def _InternalAddFileDescriptor(self, file_desc):
@@ -618,11 +581,21 @@ class DescriptorPool(object):
     if self._descriptor_db and hasattr(
         self._descriptor_db, 'FindAllExtensionNumbers'):
       full_name = message_descriptor.full_name
-      all_numbers = self._descriptor_db.FindAllExtensionNumbers(full_name)
-      for number in all_numbers:
-        if number in self._extensions_by_number[message_descriptor]:
-          continue
-        self._TryLoadExtensionFromDB(message_descriptor, number)
+      try:
+        all_numbers = self._descriptor_db.FindAllExtensionNumbers(full_name)
+      except:
+        pass
+      else:
+        if isinstance(all_numbers, list):
+          for number in all_numbers:
+            if number in self._extensions_by_number[message_descriptor]:
+              continue
+            self._TryLoadExtensionFromDB(message_descriptor, number)
+        else:
+          warnings.warn(
+              'FindAllExtensionNumbers() on fall back DB must return a list,'
+              ' not {0}'.format(type(all_numbers))
+          )
 
     return list(self._extensions_by_number[message_descriptor].values())
 
@@ -641,8 +614,13 @@ class DescriptorPool(object):
       return
 
     full_name = message_descriptor.full_name
-    file_proto = self._descriptor_db.FindFileContainingExtension(
-        full_name, number)
+    file_proto = None
+    try:
+      file_proto = self._descriptor_db.FindFileContainingExtension(
+          full_name, number
+      )
+    except:
+      return
 
     if file_proto is None:
       return
@@ -706,7 +684,6 @@ class DescriptorPool(object):
     if not isinstance(defaults, descriptor_pb2.FeatureSetDefaults):
       raise TypeError('SetFeatureSetDefaults called with invalid type')
 
-
     if defaults.minimum_edition > defaults.maximum_edition:
       raise ValueError(
           'Invalid edition range %s to %s'
@@ -761,7 +738,10 @@ class DescriptorPool(object):
               ),
           )
       )
-    if edition > self._edition_defaults.maximum_edition:
+    if (
+        edition > self._edition_defaults.maximum_edition
+        and edition != descriptor_pb2.EDITION_UNSTABLE
+    ):
       raise TypeError(
           'Edition %s is later than the maximum supported edition %s!'
           % (
@@ -775,7 +755,7 @@ class DescriptorPool(object):
     for d in self._edition_defaults.defaults:
       if d.edition > edition:
         break
-      found = d.features
+      found = d
     if found is None:
       raise TypeError(
           'No valid default found for edition %s!'
@@ -783,7 +763,8 @@ class DescriptorPool(object):
       )
 
     defaults = descriptor_pb2.FeatureSet()
-    defaults.CopyFrom(found)
+    defaults.CopyFrom(found.fixed_features)
+    defaults.MergeFrom(found.overridable_features)
     return defaults
 
   def _InternFeatures(self, features):

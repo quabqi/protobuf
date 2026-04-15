@@ -101,7 +101,10 @@ class MessageReflection {
   @SuppressWarnings("unchecked")
   static boolean isInitialized(MessageOrBuilder message) {
     // Check that all required fields are present.
-    for (final Descriptors.FieldDescriptor field : message.getDescriptorForType().getFields()) {
+    Descriptor descriptor = message.getDescriptorForType();
+    int numFields = descriptor.getFieldCount();
+    for (int i = 0; i < numFields; i++) {
+      FieldDescriptor field = descriptor.getField(i);
       if (field.isRequired()) {
         if (!message.hasField(field)) {
           return false;
@@ -224,12 +227,14 @@ class MessageReflection {
      * Sets a field to the given value. The value must be of the correct type for this field, i.e.
      * the same type that {@link Message#getField(Descriptors.FieldDescriptor)} would return.
      */
+    @CanIgnoreReturnValue
     MergeTarget setField(Descriptors.FieldDescriptor field, Object value);
 
     /**
      * Clears the field. This is exactly equivalent to calling the generated "clear" accessor method
      * corresponding to the field.
      */
+    @CanIgnoreReturnValue
     MergeTarget clearField(Descriptors.FieldDescriptor field);
 
     /**
@@ -240,6 +245,7 @@ class MessageReflection {
      * @throws IllegalArgumentException The field is not a repeated field, or {@code
      *     field.getContainingType() != getDescriptorForType()}.
      */
+    @CanIgnoreReturnValue
     MergeTarget setRepeatedField(Descriptors.FieldDescriptor field, int index, Object value);
 
     /**
@@ -248,6 +254,7 @@ class MessageReflection {
      * @throws IllegalArgumentException The field is not a repeated field, or {@code
      *     field.getContainingType() != getDescriptorForType()}.
      */
+    @CanIgnoreReturnValue
     MergeTarget addRepeatedField(Descriptors.FieldDescriptor field, Object value);
 
     /**
@@ -262,6 +269,7 @@ class MessageReflection {
      * Clears the oneof. This is exactly equivalent to calling the generated "clear" accessor method
      * corresponding to the oneof.
      */
+    @CanIgnoreReturnValue
     MergeTarget clearOneof(Descriptors.OneofDescriptor oneof);
 
     /** Obtains the FieldDescriptor if the given oneof is set. Returns null if no field is set. */
@@ -1195,8 +1203,7 @@ class MessageReflection {
       } else {
         while (input.getBytesUntilLimit() > 0) {
           final Object value =
-              WireFormat.readPrimitiveField(
-                  input, field.getLiteType(), target.getUtf8Validation(field));
+              input.readPrimitiveField(field.getLiteType(), target.getUtf8Validation(field));
           target.addRepeatedField(field, value);
         }
       }
@@ -1231,9 +1238,7 @@ class MessageReflection {
           }
           break;
         default:
-          value =
-              WireFormat.readPrimitiveField(
-                  input, field.getLiteType(), target.getUtf8Validation(field));
+          value = input.readPrimitiveField(field.getLiteType(), target.getUtf8Validation(field));
           break;
       }
 
@@ -1334,6 +1339,8 @@ class MessageReflection {
         // We haven't seen a type ID yet or we want parse message lazily.
         rawBytes = input.readBytes();
 
+      } else if (tag == WireFormat.MESSAGE_SET_ITEM_END_TAG) {
+        break;
       } else { // Unknown tag. Skip it.
         if (!input.skipField(tag)) {
           break; // End of group
@@ -1372,8 +1379,9 @@ class MessageReflection {
               rawBytes, extensionRegistry, field, extension.defaultInstance);
       target.setField(field, value);
     } else {
-      // Use LazyField to load MessageSet lazily.
-      LazyField lazyField = new LazyField(extension.defaultInstance, extensionRegistry, rawBytes);
+      // Use InternalLazyField to load MessageSet lazily.
+      InternalLazyField lazyField =
+          new InternalLazyField(extension.defaultInstance, extensionRegistry, rawBytes);
       target.setField(field, lazyField);
     }
   }

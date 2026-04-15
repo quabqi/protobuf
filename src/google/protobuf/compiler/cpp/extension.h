@@ -15,6 +15,8 @@
 #include <string>
 
 #include "absl/container/flat_hash_map.h"
+#include "absl/strings/string_view.h"
+#include "google/protobuf/compiler/cpp/helpers.h"
 #include "google/protobuf/compiler/cpp/options.h"
 #include "google/protobuf/port.h"
 
@@ -44,8 +46,7 @@ class PROTOC_EXPORT ExtensionGenerator {
  public:
   // See generator.cc for the meaning of dllexport_decl.
   explicit ExtensionGenerator(const FieldDescriptor* descriptor,
-                              const Options& options,
-                              MessageSCCAnalyzer* scc_analyzer);
+                              const Options& options);
   ExtensionGenerator(const ExtensionGenerator&) = delete;
   ExtensionGenerator& operator=(const ExtensionGenerator&) = delete;
   ~ExtensionGenerator();
@@ -56,7 +57,23 @@ class PROTOC_EXPORT ExtensionGenerator {
   // Source file stuff.
   void GenerateDefinition(io::Printer* p);
 
-  void GenerateRegistration(io::Printer* p);
+  // Feature-specific defaults.
+  void GenerateFeatureDefaults(io::Printer* p) const;
+
+  // Extension registration can happen at different priority levels depending on
+  // the features used.
+  //
+  // For Weak Descriptor messages, we must use a two phase approach where we
+  // first register all the extensions that are fully linked in, and then we
+  // register the rest. To do that, we register the linked in extensions on
+  // priority 101 and the rest as priority 102.
+  // For extensions that are missing prototypes we need to create the prototypes
+  // before we can register them, but for that we need to successfully parse
+  // its descriptors, which might require other extensions to be registered
+  // first. All extensions required for descriptor parsing will be fully linked
+  // in and registered in the first phase.
+  void GenerateRegistration(io::Printer* p, InitPriority priority);
+  bool WillGenerateRegistration(InitPriority priority);
 
   bool IsScoped() const;
 
@@ -64,7 +81,6 @@ class PROTOC_EXPORT ExtensionGenerator {
   const FieldDescriptor* descriptor_;
   std::string type_traits_;
   Options options_;
-  MessageSCCAnalyzer* scc_analyzer_;
 
   absl::flat_hash_map<absl::string_view, std::string> variables_;
 };
@@ -76,4 +92,4 @@ class PROTOC_EXPORT ExtensionGenerator {
 
 #include "google/protobuf/port_undef.inc"
 
-#endif  // GOOGLE_PROTOBUF_COMPILER_CPP_MESSAGE_H__
+#endif  // GOOGLE_PROTOBUF_COMPILER_CPP_EXTENSION_H__

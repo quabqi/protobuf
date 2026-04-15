@@ -11,16 +11,22 @@
 
 #include "google/protobuf/wire_format_lite.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <limits>
-#include <stack>
+#include <new>
 #include <string>
-#include <vector>
+#include <type_traits>
 
 #include "absl/log/absl_check.h"
 #include "absl/log/absl_log.h"
 #include "absl/strings/cord.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_format.h"
+#include "absl/strings/string_view.h"
+#include "google/protobuf/io/coded_stream.h"
+#include "google/protobuf/message_lite.h"
+#include "google/protobuf/repeated_field.h"
 #include "utf8_validity.h"
 
 
@@ -277,30 +283,6 @@ void CodedOutputStreamFieldSkipper::SkipUnknownEnum(int field_number,
                                                     int value) {
   unknown_fields_->WriteVarint32(field_number);
   unknown_fields_->WriteVarint64(value);
-}
-
-bool WireFormatLite::ReadPackedEnumPreserveUnknowns(
-    io::CodedInputStream* input, int field_number, bool (*is_valid)(int),
-    io::CodedOutputStream* unknown_fields_stream, RepeatedField<int>* values) {
-  uint32_t length;
-  if (!input->ReadVarint32(&length)) return false;
-  io::CodedInputStream::Limit limit = input->PushLimit(length);
-  while (input->BytesUntilLimit() > 0) {
-    int value;
-    if (!ReadPrimitive<int, WireFormatLite::TYPE_ENUM>(input, &value)) {
-      return false;
-    }
-    if (is_valid == nullptr || is_valid(value)) {
-      values->Add(value);
-    } else {
-      uint32_t tag = WireFormatLite::MakeTag(field_number,
-                                             WireFormatLite::WIRETYPE_VARINT);
-      unknown_fields_stream->WriteVarint32(tag);
-      unknown_fields_stream->WriteVarint32(value);
-    }
-  }
-  input->PopLimit(limit);
-  return true;
 }
 
 #if !defined(ABSL_IS_LITTLE_ENDIAN)
@@ -571,13 +553,6 @@ bool WireFormatLite::ReadBytes(io::CodedInputStream* input,
   return ReadBytesToString(input, value);
 }
 
-bool WireFormatLite::ReadBytes(io::CodedInputStream* input, std::string** p) {
-  if (*p == &GetEmptyStringAlreadyInited()) {
-    *p = new std::string();
-  }
-  return ReadBytesToString(input, *p);
-}
-
 void PrintUTF8ErrorLog(absl::string_view message_name,
                        absl::string_view field_name, const char* operation_str,
                        bool emit_stacktrace) {
@@ -604,7 +579,7 @@ void PrintUTF8ErrorLog(absl::string_view message_name,
 }
 
 bool WireFormatLite::VerifyUtf8String(const char* data, int size, Operation op,
-                                      const char* field_name) {
+                                      const absl::string_view field_name) {
   if (!utf8_range::IsStructurallyValid({data, static_cast<size_t>(size)})) {
     const char* operation_str = nullptr;
     switch (op) {
@@ -637,9 +612,18 @@ static size_t VarintSize(const T* data, const int n) {
       "Cannot SignExtended unsigned types");
   static_assert(!(SignExtended && ZigZag),
                 "Cannot SignExtended and ZigZag on the same type");
-  uint32_t sum = n;
+  // This approach is only faster when vectorized, and the vectorized
+  // implementation only works in units of the platform's vector width, and is
+  // only faster once a certain number of iterations are used. Normally the
+  // compiler generates two loops - one partially unrolled vectorized loop that
+  // processes big chunks, and a second "epilogue" scalar loop to finish up the
+  // remainder. This is done manually here so that the faster scalar
+  // implementation is used for small inputs and for the epilogue.
+  int vectorN = n & -32;
+  uint32_t sum = vectorN;
   uint32_t msb_sum = 0;
-  for (int i = 0; i < n; i++) {
+  int i = 0;
+  for (; i < vectorN; i++) {
     uint32_t x = data[i];
     if (ZigZag) {
       x = WireFormatLite::ZigZagEncode32(x);
@@ -655,6 +639,21 @@ static size_t VarintSize(const T* data, const int n) {
     if (x > 0x1FFFFF) sum++;
     if (x > 0xFFFFFFF) sum++;
   }
+#ifdef __clang__
+// Clang is not smart enough to see that this loop doesn't run many times
+// NOLINTNEXTLINE(google3-runtime-pragma-loop-hint): b/315043579
+#pragma clang loop vectorize(disable) unroll(disable) interleave(disable)
+#endif
+  for (; i < n; i++) {
+    uint32_t x = data[i];
+    if (ZigZag) {
+      sum += WireFormatLite::SInt32Size(x);
+    } else if (SignExtended) {
+      sum += WireFormatLite::Int32Size(x);
+    } else {
+      sum += WireFormatLite::UInt32Size(x);
+    }
+  }
   if (SignExtended) sum += msb_sum * 5;
   return sum;
 }
@@ -665,8 +664,10 @@ static size_t VarintSize64(const T* data, const int n) {
   // is_unsigned<T> => !ZigZag
   static_assert(!ZigZag || !std::is_unsigned<T>::value,
                 "Cannot ZigZag encode unsigned types");
-  uint64_t sum = n;
-  for (int i = 0; i < n; i++) {
+  int vectorN = n & -32;
+  uint64_t sum = vectorN;
+  int i = 0;
+  for (; i < vectorN; i++) {
     uint64_t x = data[i];
     if (ZigZag) {
       x = WireFormatLite::ZigZagEncode64(x);
@@ -681,6 +682,19 @@ static size_t VarintSize64(const T* data, const int n) {
     if (x > 0x3FFF) sum++;
     if (x > 0x1FFFFF) sum++;
     if (x > 0xFFFFFFF) sum++;
+  }
+#ifdef __clang__
+// Clang is not smart enough to see that this loop doesn't run many times
+// NOLINTNEXTLINE(google3-runtime-pragma-loop-hint): b/315043579
+#pragma clang loop vectorize(disable) unroll(disable) interleave(disable)
+#endif
+  for (; i < n; i++) {
+    uint64_t x = data[i];
+    if (ZigZag) {
+      sum += WireFormatLite::SInt64Size(x);
+    } else {
+      sum += WireFormatLite::UInt64Size(x);
+    }
   }
   return sum;
 }
@@ -749,12 +763,9 @@ size_t WireFormatLite::EnumSize(const RepeatedField<int>& value) {
 
 #endif
 
-// Micro benchmarks show that the SSE improved loop only starts beating
-// the normal loop on Haswell platforms and then only for >32 ints. We
-// disable this for now. Some specialized users might find it worthwhile to
-// enable this.
-#define USE_SSE_FOR_64_BIT_INTEGER_ARRAYS 0
-#if USE_SSE_FOR_64_BIT_INTEGER_ARRAYS
+// Micro benchmarks show that the vectorizable loop only starts beating
+// the normal loop when 256-bit vector registers are available.
+#if defined(__AVX2__) && defined(__clang__)
 size_t WireFormatLite::Int64Size(const RepeatedField<int64_t>& value) {
   return VarintSize64<false>(value.data(), value.size());
 }
@@ -797,6 +808,91 @@ size_t WireFormatLite::SInt64Size(const RepeatedField<int64_t>& value) {
 }
 
 #endif
+
+size_t WireFormatLite::Int32SizeWithPackedTagSize(
+    const RepeatedField<int32_t>& value, size_t tag_size,
+    const internal::CachedSize& cached_size) {
+  if (value.empty()) {
+    cached_size.Set(0);
+    return 0;
+  }
+  size_t res;
+  PROTOBUF_ALWAYS_INLINE_CALL res = Int32Size(value);
+  cached_size.SetNonZero(ToCachedSize(res));
+  return tag_size + res + Int32Size(static_cast<int32_t>(res));
+}
+size_t WireFormatLite::Int64SizeWithPackedTagSize(
+    const RepeatedField<int64_t>& value, size_t tag_size,
+    const internal::CachedSize& cached_size) {
+  if (value.empty()) {
+    cached_size.Set(0);
+    return 0;
+  }
+  size_t res;
+  PROTOBUF_ALWAYS_INLINE_CALL res = Int64Size(value);
+  cached_size.SetNonZero(ToCachedSize(res));
+  return tag_size + res + Int32Size(static_cast<int32_t>(res));
+}
+size_t WireFormatLite::UInt32SizeWithPackedTagSize(
+    const RepeatedField<uint32_t>& value, size_t tag_size,
+    const internal::CachedSize& cached_size) {
+  if (value.empty()) {
+    cached_size.Set(0);
+    return 0;
+  }
+  size_t res;
+  PROTOBUF_ALWAYS_INLINE_CALL res = UInt32Size(value);
+  cached_size.SetNonZero(ToCachedSize(res));
+  return tag_size + res + Int32Size(static_cast<int32_t>(res));
+}
+size_t WireFormatLite::UInt64SizeWithPackedTagSize(
+    const RepeatedField<uint64_t>& value, size_t tag_size,
+    const internal::CachedSize& cached_size) {
+  if (value.empty()) {
+    cached_size.Set(0);
+    return 0;
+  }
+  size_t res;
+  PROTOBUF_ALWAYS_INLINE_CALL res = UInt64Size(value);
+  cached_size.SetNonZero(ToCachedSize(res));
+  return tag_size + res + Int32Size(static_cast<int32_t>(res));
+}
+size_t WireFormatLite::SInt32SizeWithPackedTagSize(
+    const RepeatedField<int32_t>& value, size_t tag_size,
+    const internal::CachedSize& cached_size) {
+  if (value.empty()) {
+    cached_size.Set(0);
+    return 0;
+  }
+  size_t res;
+  PROTOBUF_ALWAYS_INLINE_CALL res = SInt32Size(value);
+  cached_size.SetNonZero(ToCachedSize(res));
+  return tag_size + res + Int32Size(static_cast<int32_t>(res));
+}
+size_t WireFormatLite::SInt64SizeWithPackedTagSize(
+    const RepeatedField<int64_t>& value, size_t tag_size,
+    const internal::CachedSize& cached_size) {
+  if (value.empty()) {
+    cached_size.Set(0);
+    return 0;
+  }
+  size_t res;
+  PROTOBUF_ALWAYS_INLINE_CALL res = SInt64Size(value);
+  cached_size.SetNonZero(ToCachedSize(res));
+  return tag_size + res + Int32Size(static_cast<int32_t>(res));
+}
+size_t WireFormatLite::EnumSizeWithPackedTagSize(
+    const RepeatedField<int>& value, size_t tag_size,
+    const internal::CachedSize& cached_size) {
+  if (value.empty()) {
+    cached_size.Set(0);
+    return 0;
+  }
+  size_t res;
+  PROTOBUF_ALWAYS_INLINE_CALL res = EnumSize(value);
+  cached_size.SetNonZero(ToCachedSize(res));
+  return tag_size + res + Int32Size(static_cast<int32_t>(res));
+}
 
 }  // namespace internal
 }  // namespace protobuf

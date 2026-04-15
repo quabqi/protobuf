@@ -16,7 +16,43 @@
 #include "python/repeated.h"
 #include "python/unknown_fields.h"
 
+// Mutex wrapper when GIL-disabled. Zero-cost when GIL-enabled.
+// NOTE: Protobuf Free-threading support is still experimental.
+// TODO: Remove mutex and make upb python lock free.
+#ifdef Py_GIL_DISABLED
+#ifdef _POSIX_THREADS
+#define ENABLE_MUTEX 1
+#include <pthread.h>
+#else
+#error "GIL is disabled but _POSIX_THREADS isn't available"
+#endif  // _POSIX_THREADS
+#endif  // Py_GIL_DISABLED
+
+typedef struct {
+#ifdef ENABLE_MUTEX
+  pthread_mutex_t mutex;
+#endif
+} FreeThreadingMutex;
+
+#ifdef ENABLE_MUTEX
+static FreeThreadingMutex obj_cache_mutex = {PTHREAD_MUTEX_INITIALIZER};
+#else
+static FreeThreadingMutex obj_cache_mutex = {};
+#endif
+
 static upb_Arena* PyUpb_NewArena(void);
+
+void FreeThreadingLock(FreeThreadingMutex* thread_mutex) {
+#ifdef ENABLE_MUTEX
+  pthread_mutex_lock(&(thread_mutex->mutex));
+#endif
+}
+
+void FreeThreadingUnlock(FreeThreadingMutex* thread_mutex) {
+#ifdef ENABLE_MUTEX
+  pthread_mutex_unlock(&(thread_mutex->mutex));
+#endif
+}
 
 static void PyUpb_ModuleDealloc(void* module) {
   PyUpb_ModuleState* s = PyModule_GetState(module);
@@ -58,6 +94,12 @@ static struct PyModuleDef module_def = {PyModuleDef_HEAD_INIT,
 // -----------------------------------------------------------------------------
 
 PyUpb_ModuleState* PyUpb_ModuleState_MaybeGet(void) {
+#if PY_VERSION_HEX >= 0x030D0000  // >= 3.13
+  /* Calling `PyState_FindModule` during interpreter shutdown causes a crash. */
+  if (Py_IsFinalizing()) {
+    return NULL;
+  }
+#endif
   PyObject* module = PyState_FindModule(&module_def);
   return module ? PyModule_GetState(module) : NULL;
 }
@@ -81,7 +123,7 @@ PyObject* PyUpb_GetWktBases(PyUpb_ModuleState* state) {
                                                  ".well_known_types");
 
     if (wkt_module == NULL) {
-      return false;
+      return NULL;
     }
 
     state->wkt_bases = PyObject_GetAttrString(wkt_module, "WKTBASES");
@@ -174,24 +216,72 @@ PyUpb_WeakMap* PyUpb_ObjCache_Instance(void) {
   return state->obj_cache;
 }
 
+static PyUpb_WeakMap* PyUpb_ObjCache_MaybeInstance(void) {
+  // During the shutdown sequence, our objects may need to be deallocated, or
+  // there may even still be attempts to *construct* new ones (in user code).
+  // At that point our state will be NULL, so all access to the cache has to be
+  // no-op.
+  PyUpb_ModuleState* state = PyUpb_ModuleState_MaybeGet();
+  if (!state) {
+    return NULL;
+  }
+  return state->obj_cache;
+}
+
 void PyUpb_ObjCache_Add(const void* key, PyObject* py_obj) {
-  PyUpb_WeakMap_Add(PyUpb_ObjCache_Instance(), key, py_obj);
+  PyUpb_WeakMap* cache = PyUpb_ObjCache_MaybeInstance();
+  if (!cache) {
+    return;
+  }
+  FreeThreadingLock(&obj_cache_mutex);
+  PyUpb_WeakMap_Add(cache, key, py_obj);
+  FreeThreadingUnlock(&obj_cache_mutex);
+}
+
+void PyUpb_KnownObjCache_Add(PyUpb_WeakMap* cache, const void* key,
+                             PyObject* py_obj) {
+  FreeThreadingLock(&obj_cache_mutex);
+  PyUpb_WeakMap_Add(cache, key, py_obj);
+  FreeThreadingUnlock(&obj_cache_mutex);
 }
 
 void PyUpb_ObjCache_Delete(const void* key) {
-  PyUpb_ModuleState* state = PyUpb_ModuleState_MaybeGet();
-  if (!state) {
-    // During the shutdown sequence, our object's Dealloc() methods can be
-    // called *after* our module Dealloc() method has been called.  At that
-    // point our state will be NULL and there is nothing to delete out of the
-    // map.
+  PyUpb_WeakMap* cache = PyUpb_ObjCache_MaybeInstance();
+  if (!cache) {
     return;
   }
-  PyUpb_WeakMap_Delete(state->obj_cache, key);
+  FreeThreadingLock(&obj_cache_mutex);
+  PyUpb_WeakMap_Delete(cache, key);
+  FreeThreadingUnlock(&obj_cache_mutex);
 }
 
 PyObject* PyUpb_ObjCache_Get(const void* key) {
-  return PyUpb_WeakMap_Get(PyUpb_ObjCache_Instance(), key);
+  PyUpb_WeakMap* cache = PyUpb_ObjCache_MaybeInstance();
+  if (!cache) {
+    // When the interpreter is finalizing, the state may not be available, so
+    // we don't try to find existing objects in the object cache - in order to
+    // prevent a crash. Unfortunately, doing this can lead to different
+    // semantics in protobuf APIs during shutdown. For example:
+    //
+    //   m = MyMessage()
+    //
+    //   # Returns true most of the time, but false during shutdown.
+    //   assert(m.submsg is m.submsg)
+    //   assert(Py_IsFinalizing());
+    //
+    //
+    //   # Returns true most of the time, but false during shutdown.
+    //   assert(foo_pb2.DESCRIPTOR.message_types_by_name['Bar'] is
+    //          foo_pb2.DESCRIPTOR.message_types_by_name['Bar')
+#if PY_VERSION_HEX >= 0x030D0000  // >= 3.13
+    assert(Py_IsFinalizing());
+#endif
+    return NULL;
+  }
+  FreeThreadingLock(&obj_cache_mutex);
+  PyObject* obj = PyUpb_WeakMap_Get(cache, key);
+  FreeThreadingUnlock(&obj_cache_mutex);
+  return obj;
 }
 
 // -----------------------------------------------------------------------------
@@ -199,15 +289,12 @@ PyObject* PyUpb_ObjCache_Get(const void* key) {
 // -----------------------------------------------------------------------------
 
 typedef struct {
-  PyObject_HEAD;
+  // clang-format off
+  PyObject_HEAD
   upb_Arena* arena;
+  // clang-format on
 } PyUpb_Arena;
 
-// begin:google_only
-// static upb_alloc* global_alloc = &upb_alloc_global;
-// end:google_only
-
-// begin:github_only
 #ifdef __GLIBC__
 #include <malloc.h>  // malloc_trim()
 #endif
@@ -216,13 +303,13 @@ typedef struct {
 // memory to the OS.  Without this call, we appear to leak memory, at least
 // as measured in RSS.
 //
-// We opt not to use this instead of PyMalloc (which would also solve the
+// We opt to use this instead of PyMalloc (which would also solve the
 // problem) because the latter requires the GIL to be held.  This would make
 // our messages unsafe to share with other languages that could free at
 // unpredictable
 // times.
 static void* upb_trim_allocfunc(upb_alloc* alloc, void* ptr, size_t oldsize,
-                                size_t size) {
+                                size_t size, size_t* actual_size) {
   (void)alloc;
   (void)oldsize;
   if (size == 0) {
@@ -240,8 +327,7 @@ static void* upb_trim_allocfunc(upb_alloc* alloc, void* ptr, size_t oldsize,
   }
 }
 static upb_alloc trim_alloc = {&upb_trim_allocfunc};
-static const upb_alloc* global_alloc = &trim_alloc;
-// end:github_only
+static upb_alloc* global_alloc = &trim_alloc;
 
 static upb_Arena* PyUpb_NewArena(void) {
   return upb_Arena_Init(NULL, 0, global_alloc);
@@ -323,6 +409,31 @@ PyTypeObject* PyUpb_AddClassWithBases(PyObject* m, PyType_Spec* spec,
   return (PyTypeObject*)type;
 }
 
+PyTypeObject* PyUpb_AddClassWithRegister(PyObject* m, PyType_Spec* spec,
+                                         PyObject* virtual_base,
+                                         const char** methods) {
+  PyObject* type = PyType_FromSpec(spec);
+  PyObject* ret1 = PyObject_CallMethod(virtual_base, "register", "O", type);
+  if (!ret1) {
+    Py_XDECREF(type);
+    return NULL;
+  }
+  for (size_t i = 0; methods[i] != NULL; i++) {
+    PyObject* method = PyObject_GetAttrString(virtual_base, methods[i]);
+    if (!method) {
+      Py_XDECREF(type);
+      return NULL;
+    }
+    int ret2 = PyObject_SetAttrString(type, methods[i], method);
+    if (ret2 < 0) {
+      Py_XDECREF(type);
+      return NULL;
+    }
+  }
+
+  return (PyTypeObject*)type;
+}
+
 const char* PyUpb_GetStrData(PyObject* obj) {
   if (PyUnicode_Check(obj)) {
     return PyUnicode_AsUTF8AndSize(obj, NULL);
@@ -380,7 +491,7 @@ bool PyUpb_IndexToRange(PyObject* index, Py_ssize_t size, Py_ssize_t* i,
 // Module Entry Point
 // -----------------------------------------------------------------------------
 
-__attribute__((visibility("default"))) PyMODINIT_FUNC PyInit__message(void) {
+PyMODINIT_FUNC PyInit__message(void) {
   PyObject* m = PyModule_Create(&module_def);
   if (!m) return NULL;
 
@@ -388,7 +499,9 @@ __attribute__((visibility("default"))) PyMODINIT_FUNC PyInit__message(void) {
 
   state->allow_oversize_protos = false;
   state->wkt_bases = NULL;
+  FreeThreadingLock(&obj_cache_mutex);
   state->obj_cache = PyUpb_WeakMap_New();
+  FreeThreadingUnlock(&obj_cache_mutex);
   state->c_descriptor_symtab = NULL;
 
   if (!PyUpb_InitDescriptorContainers(m) || !PyUpb_InitDescriptorPool(m) ||

@@ -21,7 +21,7 @@ module Google
       Upb_Map_Begin = -1
 
       ## Encoding Status
-      Upb_Status_MaxMessage = 127
+      Upb_Status_MaxMessage = 511
       Upb_Encode_Deterministic = 1
       Upb_Encode_SkipUnknown = 2
 
@@ -35,6 +35,10 @@ module Google
 
       ## JSON Decoding options
       Upb_JsonDecode_IgnoreUnknown = 1
+
+      ## JSON Decoding results
+      Upb_JsonDecodeResult_Ok = 0
+      Upb_JsonDecodeResult_Error = 2
 
       typedef :pointer, :Array
       typedef :pointer, :DefPool
@@ -95,11 +99,6 @@ module Google
         :repeated
       )
 
-      Syntax = enum(
-        :Proto2, 2,
-        :Proto3
-      )
-
       # All the different kind of well known type messages. For simplicity of check,
       # number wrappers and string wrappers are grouped together. Make sure the
       # order and merber of these groups are not changed.
@@ -152,8 +151,7 @@ module Google
       end
 
       class MiniTable < ::FFI::Struct
-        layout :subs, :pointer,
-               :fields, :pointer,
+        layout :fields, :pointer,
                :size, :uint16_t,
                :field_count, :uint16_t,
                :ext, :uint8_t,  # upb_ExtMode, declared as uint8_t so sizeof(ext) == 1
@@ -189,6 +187,8 @@ module Google
                :array_val,:pointer,
                :str_val, StringView
       end
+
+      Upb_Message_Begin = -1
 
       class MutableMessageValue < ::FFI::Union
         layout :map, :Map,

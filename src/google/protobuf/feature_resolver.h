@@ -11,6 +11,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
@@ -55,6 +56,38 @@ class PROTOBUF_EXPORT FeatureResolver {
   absl::StatusOr<FeatureSet> MergeFeatures(
       const FeatureSet& merged_parent, const FeatureSet& unmerged_child) const;
 
+  // Validates an unresolved FeatureSet object to make sure they obey the
+  // lifetime requirements.  This needs to run *within* the pool being built, so
+  // that the descriptors of any feature extensions are known and can be
+  // validated.  `pool_descriptor` should point to the FeatureSet descriptor
+  // inside the pool, or nullptr if one doesn't exist,
+  //
+  // This will return error messages for any explicitly set features used before
+  // their introduction or after their removal.  Warnings will be included for
+  // any explicitly set features that have been deprecated.
+  struct PROTOBUF_FUTURE_ADD_EARLY_WARN_UNUSED ValidationResults {
+    std::vector<std::string> errors;
+    std::vector<std::string> warnings;
+  };
+  PROTOBUF_FUTURE_ADD_EARLY_NODISCARD static ValidationResults
+  ValidateFeatureLifetimes(Edition edition, const Message& option,
+                           const Descriptor* pool_descriptor);
+
+  // Validates feature support on features and options
+  // to enforce feature support to be written correctly.
+  //
+  // This will return error status and error message for incorrectly written
+  // feature support.
+  static absl::Status ValidateFeatureSupport(
+      const FieldOptions::FeatureSupport& support, absl::string_view full_name);
+
+  // Calls ValidateFeatureSupport on fields during proto parsing.
+  // This will handle feature validation on fields of different types,
+  // especially of type ENUM.
+  //
+  // This will return error status and error message of ValidateFeatureSupport.
+  static absl::Status ValidateFieldFeatureSupport(const FieldDescriptor& field);
+
  private:
   explicit FeatureResolver(FeatureSet defaults)
       : defaults_(std::move(defaults)) {}
@@ -62,9 +95,14 @@ class PROTOBUF_EXPORT FeatureResolver {
   FeatureSet defaults_;
 };
 
+namespace internal {
+// Gets the default feature set for a given edition.
+absl::StatusOr<FeatureSet> PROTOBUF_EXPORT GetEditionFeatureSetDefaults(
+    Edition edition, const FeatureSetDefaults& defaults);
+}  // namespace internal
 }  // namespace protobuf
 }  // namespace google
 
-#endif  // GOOGLE_PROTOBUF_FEATURE_RESOLVER_H__
-
 #include "google/protobuf/port_undef.inc"
+
+#endif  // GOOGLE_PROTOBUF_FEATURE_RESOLVER_H__

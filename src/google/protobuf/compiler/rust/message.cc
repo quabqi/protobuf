@@ -7,18 +7,31 @@
 
 #include "google/protobuf/compiler/rust/message.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <vector>
+
 #include "absl/log/absl_check.h"
 #include "absl/log/absl_log.h"
-#include "absl/strings/str_format.h"
+#include "absl/strings/ascii.h"
+#include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
 #include "google/protobuf/compiler/cpp/helpers.h"
 #include "google/protobuf/compiler/cpp/names.h"
+#include "google/protobuf/compiler/rust/accessors/accessor_case.h"
 #include "google/protobuf/compiler/rust/accessors/accessors.h"
 #include "google/protobuf/compiler/rust/context.h"
 #include "google/protobuf/compiler/rust/enum.h"
+#include "google/protobuf/compiler/rust/extension.h"
 #include "google/protobuf/compiler/rust/naming.h"
 #include "google/protobuf/compiler/rust/oneof.h"
+#include "google/protobuf/compiler/rust/upb_helpers.h"
+#include "google/protobuf/compiler/scc.h"
 #include "google/protobuf/descriptor.h"
+#include "upb/mini_descriptor/link.h"
+#include "upb/mini_table/field.h"
+#include "upb/reflection/def.hpp"
 
 namespace google {
 namespace protobuf {
@@ -26,23 +39,21 @@ namespace compiler {
 namespace rust {
 namespace {
 
+using Sub = ::google::protobuf::io::Printer::Sub;
+
 void MessageNew(Context& ctx, const Descriptor& msg) {
   switch (ctx.opts().kernel) {
     case Kernel::kCpp:
       ctx.Emit({{"new_thunk", ThunkName(ctx, msg, "new")}}, R"rs(
-        Self { inner: $pbr$::MessageInner { msg: unsafe { $new_thunk$() } } }
+        let raw = unsafe { $new_thunk$() };
+        let inner = unsafe { $pbr$::OwnedMessageInner::<Self>::wrap_raw(raw) };
+        Self { inner }
       )rs");
       return;
 
     case Kernel::kUpb:
-      ctx.Emit({{"new_thunk", ThunkName(ctx, msg, "new")}}, R"rs(
-        let arena = $pbr$::Arena::new();
-        Self {
-          inner: $pbr$::MessageInner {
-            msg: unsafe { $new_thunk$(arena.raw()) },
-            arena,
-          }
-        }
+      ctx.Emit(R"rs(
+        Self { inner: $pbr$::OwnedMessageInner::<Self>::new() }
       )rs");
       return;
   }
@@ -50,22 +61,19 @@ void MessageNew(Context& ctx, const Descriptor& msg) {
   ABSL_LOG(FATAL) << "unreachable";
 }
 
-void MessageSerialize(Context& ctx, const Descriptor& msg) {
+void MessageDebug(Context& ctx, const Descriptor& msg) {
   switch (ctx.opts().kernel) {
     case Kernel::kCpp:
-      ctx.Emit({{"serialize_thunk", ThunkName(ctx, msg, "serialize")}}, R"rs(
-        unsafe { $serialize_thunk$(self.inner.msg) }
+      ctx.Emit({},
+               R"rs(
+        $pbr$::debug_string(self.raw_msg(), f)
       )rs");
       return;
 
     case Kernel::kUpb:
-      ctx.Emit({{"serialize_thunk", ThunkName(ctx, msg, "serialize")}}, R"rs(
-        let arena = $pbr$::Arena::new();
-        let mut len = 0;
-        unsafe {
-          let data = $serialize_thunk$(self.inner.msg, arena.raw(), &mut len);
-          $pbr$::SerializedData::from_raw_parts(arena, data, len)
-        }
+      ctx.Emit(
+          R"rs(
+        write!(f, "{}", $pbr$::debug_string(self))
       )rs");
       return;
   }
@@ -73,84 +81,16 @@ void MessageSerialize(Context& ctx, const Descriptor& msg) {
   ABSL_LOG(FATAL) << "unreachable";
 }
 
-void MessageDeserialize(Context& ctx, const Descriptor& msg) {
-  switch (ctx.opts().kernel) {
-    case Kernel::kCpp:
-      ctx.Emit(
-          {
-              {"deserialize_thunk", ThunkName(ctx, msg, "deserialize")},
-          },
-          R"rs(
-          let success = unsafe {
-            let data = $pbr$::SerializedData::from_raw_parts(
-              $NonNull$::new(data.as_ptr() as *mut _).unwrap(),
-              data.len(),
-            );
+void CppMessageExterns(Context& ctx, const Descriptor& msg) {
+  ABSL_CHECK(ctx.is_cpp());
 
-            $deserialize_thunk$(self.inner.msg, data)
-          };
-          success.then_some(()).ok_or($pb$::ParseError)
-        )rs");
-      return;
-
-    case Kernel::kUpb:
-      ctx.Emit({{"deserialize_thunk", ThunkName(ctx, msg, "parse")}}, R"rs(
-        let arena = $pbr$::Arena::new();
-        let msg = unsafe {
-          $deserialize_thunk$(data.as_ptr(), data.len(), arena.raw())
-        };
-
-        match msg {
-          None => Err($pb$::ParseError),
-          Some(msg) => {
-            // This assignment causes self.arena to be dropped and to deallocate
-            // any previous message pointed/owned to by self.inner.msg.
-            self.inner.arena = arena;
-            self.inner.msg = msg;
-            Ok(())
-          }
-        }
-      )rs");
-      return;
-  }
-
-  ABSL_LOG(FATAL) << "unreachable";
-}
-
-void MessageExterns(Context& ctx, const Descriptor& msg) {
-  switch (ctx.opts().kernel) {
-    case Kernel::kCpp:
-      ctx.Emit(
-          {
-              {"new_thunk", ThunkName(ctx, msg, "new")},
-              {"delete_thunk", ThunkName(ctx, msg, "delete")},
-              {"serialize_thunk", ThunkName(ctx, msg, "serialize")},
-              {"deserialize_thunk", ThunkName(ctx, msg, "deserialize")},
-          },
-          R"rs(
-          fn $new_thunk$() -> $pbi$::RawMessage;
-          fn $delete_thunk$(raw_msg: $pbi$::RawMessage);
-          fn $serialize_thunk$(raw_msg: $pbi$::RawMessage) -> $pbr$::SerializedData;
-          fn $deserialize_thunk$(raw_msg: $pbi$::RawMessage, data: $pbr$::SerializedData) -> bool;
-        )rs");
-      return;
-
-    case Kernel::kUpb:
-      ctx.Emit(
-          {
-              {"new_thunk", ThunkName(ctx, msg, "new")},
-              {"serialize_thunk", ThunkName(ctx, msg, "serialize")},
-              {"deserialize_thunk", ThunkName(ctx, msg, "parse")},
-          },
-          R"rs(
-          fn $new_thunk$(arena: $pbi$::RawArena) -> $pbi$::RawMessage;
-          fn $serialize_thunk$(msg: $pbi$::RawMessage, arena: $pbi$::RawArena, len: &mut usize) -> $NonNull$<u8>;
-          fn $deserialize_thunk$(data: *const u8, size: usize, arena: $pbi$::RawArena) -> Option<$pbi$::RawMessage>;
-      )rs");
-      return;
-  }
-
-  ABSL_LOG(FATAL) << "unreachable";
+  ctx.Emit(
+      {{"new_thunk", ThunkName(ctx, msg, "new")},
+       {"default_instance_thunk", ThunkName(ctx, msg, "default_instance")}},
+      R"rs(
+      fn $new_thunk$() -> $pbr$::RawMessage;
+      fn $default_instance_thunk$() -> $pbr$::RawMessage;
+    )rs");
 }
 
 void MessageDrop(Context& ctx, const Descriptor& msg) {
@@ -160,444 +100,834 @@ void MessageDrop(Context& ctx, const Descriptor& msg) {
     return;
   }
 
-  ctx.Emit({{"delete_thunk", ThunkName(ctx, msg, "delete")}}, R"rs(
-    unsafe { $delete_thunk$(self.inner.msg); }
+  ctx.Emit(R"rs(
+    unsafe { $pbr$::proto2_rust_Message_delete(self.raw_msg()); }
   )rs");
 }
 
-bool IsStringOrBytes(FieldDescriptor::Type t) {
-  return t == FieldDescriptor::TYPE_STRING || t == FieldDescriptor::TYPE_BYTES;
-}
+void IntoProxiedForMessage(Context& ctx, const Descriptor& msg) {
+  switch (ctx.opts().kernel) {
+    case Kernel::kCpp:
+      ctx.Emit(R"rs(
+        impl<'msg> $pb$::IntoProxied<$Msg$> for $Msg$View<'msg> {
+          fn into_proxied(self, _private: $pbi$::Private) -> $Msg$ {
+            let dst = $Msg$::new();
+            unsafe { $pbr$::proto2_rust_Message_copy_from(dst.inner.raw(), self.inner.raw()) };
+            dst
+          }
+        }
 
-void GetterForViewOrMut(Context& ctx, const FieldDescriptor& field,
-                        bool is_mut) {
-  auto fieldName = field.name();
-  auto fieldType = field.type();
-  auto getter_thunk = ThunkName(ctx, field, "get");
-  auto setter_thunk = ThunkName(ctx, field, "set");
-  // If we're dealing with a Mut, the getter must be supplied
-  // self.inner.msg() whereas a View has to be supplied self.msg
-  auto self = is_mut ? "self.inner.msg()" : "self.msg";
-
-  if (fieldType == FieldDescriptor::TYPE_MESSAGE) {
-    const Descriptor& msg = *field.message_type();
-    // TODO: support messages which are defined in other crates.
-    if (!IsInCurrentlyGeneratingCrate(ctx, msg)) {
+        impl<'msg> $pb$::IntoProxied<$Msg$> for $Msg$Mut<'msg> {
+          fn into_proxied(self, _private: $pbi$::Private) -> $Msg$ {
+            $pb$::IntoProxied::into_proxied($pb$::IntoView::into_view(self), _private)
+          }
+        }
+      )rs");
       return;
-    }
-    auto prefix = "crate::" + GetCrateRelativeQualifiedPath(ctx, msg);
-    ctx.Emit(
-        {
-            {"prefix", prefix},
-            {"field", fieldName},
-            {"self", self},
-            {"getter_thunk", getter_thunk},
-            // TODO: dedupe with singular_message.cc
-            {
-                "view_body",
-                [&] {
-                  if (ctx.is_upb()) {
-                    ctx.Emit({}, R"rs(
-                      let submsg = unsafe { $getter_thunk$($self$) };
-                      match submsg {
-                        None => $prefix$View::new($pbi$::Private,
-                          $pbr$::ScratchSpace::zeroed_block($pbi$::Private)),
-                        Some(field) => $prefix$View::new($pbi$::Private, field),
-                      }
-                )rs");
-                  } else {
-                    ctx.Emit({}, R"rs(
-                      let submsg = unsafe { $getter_thunk$($self$) };
-                      $prefix$View::new($pbi$::Private, submsg)
-                )rs");
-                  }
-                },
-            },
-        },
-        R"rs(
-              pub fn r#$field$(&self) -> $prefix$View {
-                $view_body$
-              }
-            )rs");
-    return;
+
+    case Kernel::kUpb:
+      ctx.Emit(R"rs(
+        impl<'msg> $pb$::IntoProxied<$Msg$> for $Msg$View<'msg> {
+          fn into_proxied(self, _private: $pbi$::Private) -> $Msg$ {
+            let mut dst = $Msg$::new();
+            assert!(unsafe {
+              dst.inner.ptr_mut().deep_copy(self.inner.ptr(), dst.inner.arena())
+            });
+            dst
+          }
+        }
+
+        impl<'msg> $pb$::IntoProxied<$Msg$> for $Msg$Mut<'msg> {
+          fn into_proxied(self, _private: $pbi$::Private) -> $Msg$ {
+            $pb$::IntoProxied::into_proxied($pb$::IntoView::into_view(self), _private)
+          }
+        }
+      )rs");
+      return;
   }
 
-  auto rsType = PrimitiveRsTypeName(field);
-  auto asRef = IsStringOrBytes(fieldType) ? ".as_ref()" : "";
-  auto vtable =
-      IsStringOrBytes(fieldType) ? "BytesMutVTable" : "PrimitiveVTable";
-  // PrimitiveVtable is parameterized based on the underlying primitive, like
-  // u32 so we need to provide this additional type arg
-  auto optionalTypeArgs =
-      IsStringOrBytes(fieldType) ? "" : absl::StrFormat("<%s>", rsType);
-  // need to stuff ProtoStr and [u8] behind a reference since they are DSTs
-  auto stringTransform =
-      IsStringOrBytes(fieldType)
-          ? "unsafe { __pb::ProtoStr::from_utf8_unchecked(res).into() }"
-          : "res";
-
-  ctx.Emit({{"field", fieldName},
-            {"getter_thunk", getter_thunk},
-            {"setter_thunk", setter_thunk},
-            {"self", self},
-            {"RsType", rsType},
-            {"as_ref", asRef},
-            {"vtable", vtable},
-            {"optional_type_args", optionalTypeArgs},
-            {"string_transform", stringTransform},
-            {"maybe_mutator",
-             [&] {
-               // TODO: check mutational pathway genn'd correctly
-               if (is_mut) {
-                 ctx.Emit({}, R"rs(
-                  pub fn r#$field$_mut(&self) -> $pb$::Mut<'_, $RsType$> {
-                    static VTABLE: $pbi$::$vtable$$optional_type_args$ =
-                      $pbi$::$vtable$::new(
-                        $pbi$::Private,
-                        $getter_thunk$,
-                        $setter_thunk$);
-                    unsafe {
-                      <$pb$::Mut<$RsType$>>::from_inner(
-                        $pbi$::Private,
-                        $pbi$::RawVTableMutator::new(
-                          $pbi$::Private,
-                          self.inner,
-                          &VTABLE
-                        ),
-                      )
-                    }
-                  }
-                  )rs");
-               }
-             }}},
-           R"rs(
-          pub fn r#$field$(&self) -> $pb$::View<'_, $RsType$> {
-            let res = unsafe { $getter_thunk$($self$)$as_ref$ };
-            $string_transform$
-          }
-
-          $maybe_mutator$
-        )rs");
+  ABSL_LOG(FATAL) << "unreachable";
 }
 
-void AccessorsForViewOrMut(Context& ctx, const Descriptor& msg, bool is_mut) {
-  for (int i = 0; i < msg.field_count(); ++i) {
-    const FieldDescriptor& field = *msg.field(i);
-    if (field.is_repeated()) continue;
-    // TODO - add cord support
-    if (field.options().has_ctype()) continue;
-    // TODO
-    if (field.type() == FieldDescriptor::TYPE_ENUM ||
-        field.type() == FieldDescriptor::TYPE_GROUP)
-      continue;
-    GetterForViewOrMut(ctx, field, is_mut);
-    ctx.printer().PrintRaw("\n");
+// Generates code for linking the message's minitable to its dependencies.
+void UpbMiniTableLinking(Context& ctx, const Descriptor& msg,
+                         upb::MessageDefPtr upb_msg, const SCC& scc) {
+  std::vector<const upb_MiniTableField*> subs;
+  subs.resize(static_cast<size_t>(msg.field_count()));
+  uint32_t counts = upb_MiniTable_GetSubList(upb_msg.mini_table(), subs.data());
+  size_t message_count = counts >> 16;
+  size_t enum_count = static_cast<uint16_t>(counts);
+  ctx.Emit(
+      {{"submessages",
+        [&] {
+          for (size_t i = 0; i < message_count; ++i) {
+            const Descriptor& m =
+                *msg.FindFieldByNumber(
+                        static_cast<int>(upb_MiniTableField_Number(subs[i])))
+                     ->message_type();
+            if (scc.Contains(m)) {
+              ctx.Emit({{"minitable_symbol_name",
+                         QualifiedUpbMiniTableName(ctx, m)}},
+                       "$minitable_symbol_name$.0,\n");
+            } else {
+              ctx.Emit({{"name", RsTypePath(ctx, m)}},
+                       "<$name$ as "
+                       "$pbr$::AssociatedMiniTable>::mini_table(),\n");
+            }
+          }
+        }},
+       {"subenums",
+        [&] {
+          for (size_t i = message_count; i < message_count + enum_count; ++i) {
+            const EnumDescriptor* m =
+                msg.FindFieldByNumber(
+                       static_cast<int>(upb_MiniTableField_Number(subs[i])))
+                    ->enum_type();
+            ctx.Emit({{"name", RsTypePath(ctx, *m)}},
+                     "<$name$ as "
+                     "$pbr$::AssociatedMiniTableEnum>::"
+                     "mini_table(),\n");
+          }
+        }},
+       {"minitable_symbol_name", QualifiedUpbMiniTableName(ctx, msg)}},
+      R"rs(
+      $pbr$::link_mini_table(
+          $minitable_symbol_name$.0, &[$submessages$], &[$subenums$]);
+  )rs");
+}
+
+void CppGeneratedMessageTraitImpls(Context& ctx, const Descriptor& msg) {
+  ABSL_CHECK(ctx.is_cpp());
+  ctx.Emit(R"rs(
+    unsafe impl $pbr$::CppGetRawMessageMut for $Msg$Mut<'_> {
+      fn get_raw_message_mut(&mut self, _private: $pbi$::Private) -> $pbr$::RawMessage {
+        self.inner.raw()
+      }
+    }
+
+    unsafe impl $pbr$::CppGetRawMessage for $Msg$View<'_> {
+      fn get_raw_message(&self, _private: $pbi$::Private) -> $pbr$::RawMessage {
+        self.inner.raw()
+      }
+    }
+  )rs");
+}
+
+void UpbGeneratedMessageTraitImpls(Context& ctx, const Descriptor& msg,
+                                   const upb::DefPool& pool) {
+  ABSL_CHECK(ctx.is_upb());
+  ctx.Emit(
+      {{"name", MessageRsName(msg)},
+       {"mini_table_impl",
+        [&] {
+          const SCC& scc = ctx.GetSCC(msg);
+          if (scc.GetRepresentative() == &msg) {
+            for (const Descriptor* d : scc.descriptors) {
+              std::string mini_descriptor =
+                  pool.FindMessageByName(d->full_name().data())
+                      .MiniDescriptorEncode();
+              ctx.Emit({{"name", RsTypePath(ctx, *d)},
+                        {"minitable_symbol_name",
+                         QualifiedUpbMiniTableName(ctx, *d)},
+                        {"mini_descriptor", mini_descriptor},
+                        {"mini_descriptor_length", mini_descriptor.size()}},
+                       R"rs(
+                       $minitable_symbol_name$.0 =
+                           $pbr$::build_mini_table("$mini_descriptor$");
+              )rs");
+            }
+            for (const Descriptor* d : scc.descriptors) {
+              UpbMiniTableLinking(
+                  ctx, *d, pool.FindMessageByName(d->full_name().data()), scc);
+            }
+          } else {
+            ctx.Emit(
+                {{"representative", RsTypePath(ctx, *scc.GetRepresentative())}},
+                "<$representative$ as "
+                "$pbr$::AssociatedMiniTable>::mini_table();\n");
+          }
+        }},
+       {"minitable_symbol_name", QualifiedUpbMiniTableName(ctx, msg)}},
+      // We currently synchronize the minitable initialization using a
+      // OnceLock, but we could instead use CAS if we ever want to make this
+      // lock-free.
+      R"rs(
+      unsafe impl $pbr$::AssociatedMiniTable for $name$ {
+        fn mini_table() -> $pbr$::MiniTablePtr {
+          static ONCE_LOCK: $std$::sync::OnceLock<$pbr$::MiniTableInitPtr> =
+              $std$::sync::OnceLock::new();
+          unsafe {
+            ONCE_LOCK.get_or_init(|| {
+              $mini_table_impl$
+              $pbr$::MiniTableInitPtr($minitable_symbol_name$.0)
+            }).0
+          }
+        }
+      }
+    )rs");
+
+  if (msg.options().map_entry()) {
+    return;
+  }
+  ctx.Emit(R"rs(
+      unsafe impl $pbr$::UpbGetArena for $Msg$ {
+        fn get_arena(&mut self, _private: $pbi$::Private) -> &$pbr$::Arena {
+          self.inner.arena()
+        }
+      }
+
+      unsafe impl $pbr$::UpbGetMessagePtrMut for $Msg$ {
+        type Msg = $Msg$;
+        fn get_ptr_mut(&mut self, _private: $pbi$::Private) -> $pbr$::MessagePtr<$Msg$> {
+          self.inner.ptr_mut()
+        }
+      }
+      unsafe impl $pbr$::UpbGetMessagePtr for $Msg$ {
+        type Msg = $Msg$;
+        fn get_ptr(&self, _private: $pbi$::Private) -> $pbr$::MessagePtr<$Msg$> {
+          self.inner.ptr()
+        }
+      }
+      unsafe impl $pbr$::UpbGetMessagePtrMut for $Msg$Mut<'_> {
+        type Msg = $Msg$;
+        fn get_ptr_mut(&mut self, _private: $pbi$::Private) -> $pbr$::MessagePtr<$Msg$> {
+          self.inner.ptr_mut()
+        }
+      }
+      unsafe impl $pbr$::UpbGetMessagePtr for $Msg$Mut<'_> {
+        type Msg = $Msg$;
+        fn get_ptr(&self, _private: $pbi$::Private) -> $pbr$::MessagePtr<$Msg$> {
+          self.inner.ptr()
+        }
+      }
+      unsafe impl $pbr$::UpbGetMessagePtr for $Msg$View<'_> {
+        type Msg = $Msg$;
+        fn get_ptr(&self, _private: $pbi$::Private) -> $pbr$::MessagePtr<$Msg$> {
+          self.inner.ptr()
+        }
+      }
+
+      unsafe impl $pbr$::UpbGetArena for $Msg$Mut<'_> {
+        fn get_arena(&mut self, _private: $pbi$::Private) -> &$pbr$::Arena {
+          self.inner.arena()
+        }
+      }
+    )rs");
+}
+
+void TypeConversions(Context& ctx, const Descriptor& msg) {
+  if (ctx.is_cpp()) {
+    ctx.Emit(
+        R"rs(
+          impl $pbr$::CppMapTypeConversions for $Msg$ {
+              fn get_prototype() -> $pbr$::FfiMapValue {
+                  $pbr$::FfiMapValue::make_message(<$Msg$View as $std$::default::Default>::default().raw_msg())
+              }
+
+              fn to_map_value(self) -> $pbr$::FfiMapValue {
+                  $pbr$::FfiMapValue::make_message(std::mem::ManuallyDrop::new(self).raw_msg())
+              }
+
+              unsafe fn from_map_value<'b>(value: $pbr$::FfiMapValue) -> $Msg$View<'b> {
+                  debug_assert_eq!(value.tag, $pbr$::FfiMapValueTag::Message);
+                  unsafe { $pbr$::MessageViewInner::wrap_raw(value.val.m).into() }
+              }
+
+              unsafe fn mut_from_map_value<'b>(value: $pbr$::FfiMapValue) -> $Msg$Mut<'b> {
+                  debug_assert_eq!(value.tag, $pbr$::FfiMapValueTag::Message);
+                  let inner = unsafe { $pbr$::MessageMutInner::wrap_raw(value.val.m) };
+                  $Msg$Mut { inner }
+              }
+          }
+          )rs");
+  }
+  ctx.Emit(
+      {
+          {"new_thunk", ThunkName(ctx, msg, "new")},
+      },
+      R"rs(
+            impl $pbi$::EntityType for $Msg$ {
+                type Tag = $pbi$::entity_tag::MessageTag;
+            }
+
+            impl<'msg> $pbi$::EntityType for $Msg$View<'msg> {
+                type Tag = $pbi$::entity_tag::ViewProxyTag;
+            }
+
+            impl<'msg> $pbi$::EntityType for $Msg$Mut<'msg> {
+                type Tag = $pbi$::entity_tag::MutProxyTag;
+            }
+            )rs");
+}
+
+void GenerateDefaultInstanceImpl(Context& ctx, const Descriptor& msg) {
+  if (ctx.is_upb()) {
+    ctx.Emit("$pbr$::MessageViewInner::default()");
+  } else {
+    ctx.Emit(
+        {{"default_instance_thunk", ThunkName(ctx, msg, "default_instance")}},
+        R"rs(
+        unsafe {
+          $pbr$::MessageViewInner::wrap_raw($default_instance_thunk$())
+        }
+        )rs");
   }
 }
 
 }  // namespace
 
-void GenerateRs(Context& ctx, const Descriptor& msg) {
-  if (msg.map_key() != nullptr) {
-    ABSL_LOG(WARNING) << "unsupported map field: " << msg.full_name();
+void GenerateRs(Context& ctx, const Descriptor& msg, const upb::DefPool& pool) {
+  if (ctx.is_upb()) {
+    ctx.Emit({{"minitable_symbol_name", UpbMiniTableName(msg)}},
+             R"rs(
+        // This variable must not be referenced except by protobuf generated
+        // code.
+        pub(crate) static mut $minitable_symbol_name$: $pbr$::MiniTableInitPtr =
+            $pbr$::MiniTableInitPtr($pbr$::MiniTablePtr::dangling());
+    )rs");
+  }
+
+  if (msg.options().map_entry()) {
+    if (ctx.is_upb()) {
+      // Map entry messages are an implementation detail, so we restrict their
+      // visibility. The only reason we generate anything for them at all is
+      // that it is useful to have map entries implement the
+      // AssociatedMiniTable trait.
+      ctx.Emit({{"Msg", MessageRsName(msg)},
+                {"upb_generated_message_trait_impls",
+                 [&] { UpbGeneratedMessageTraitImpls(ctx, msg, pool); }}},
+               R"rs(
+          #[allow(dead_code)]
+          pub(super) struct $Msg$;
+
+          $upb_generated_message_trait_impls$
+      )rs");
+    }
     return;
   }
-  ctx.Emit({{"Msg", msg.name()},
-            {"Msg::new", [&] { MessageNew(ctx, msg); }},
-            {"Msg::serialize", [&] { MessageSerialize(ctx, msg); }},
-            {"Msg::deserialize", [&] { MessageDeserialize(ctx, msg); }},
-            {"Msg::drop", [&] { MessageDrop(ctx, msg); }},
-            {"Msg_externs", [&] { MessageExterns(ctx, msg); }},
-            {"accessor_fns",
-             [&] {
-               for (int i = 0; i < msg.field_count(); ++i) {
-                 auto& field = *msg.field(i);
-                 ctx.Emit({{"comment", FieldInfoComment(ctx, field)}}, R"rs(
-                 // $comment$
+
+  upb::MessageDefPtr upb_msg = pool.FindMessageByName(msg.full_name().data());
+  ctx.Emit(
+      {
+          // There's also ${$/$}$-style begin and end tokens, but those might
+          // be harder to retrofit here because of the giant-template style.
+          Sub("MsgDefinition", MessageRsName(msg)).AnnotatedAs(&msg),
+          {"Msg", MessageRsName(msg)},
+          {"Msg::new", [&] { MessageNew(ctx, msg); }},
+          {"Msg::drop", [&] { MessageDrop(ctx, msg); }},
+          {"Msg::debug", [&] { MessageDebug(ctx, msg); }},
+          {"default_instance_impl",
+           [&] { GenerateDefaultInstanceImpl(ctx, msg); }},
+          {"raw_msg",
+           [&] {
+             // The raw_msg() method is emitted for the C++ kernel only,
+             // because we do not need it for upb.
+             if (ctx.is_cpp()) {
+               ctx.Emit(R"rs(
+                 fn raw_msg(&self) -> $pbr$::RawMessage {
+                   self.inner.raw()
+                 }
                )rs");
-                 GenerateAccessorMsgImpl(ctx, field);
-                 ctx.printer().PrintRaw("\n");
-               }
-             }},
-            {"oneof_accessor_fns",
-             [&] {
-               for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
-                 GenerateOneofAccessors(ctx, *msg.real_oneof_decl(i));
-                 ctx.printer().PrintRaw("\n");
-               }
-             }},
+             }
+           }},
+          {"accessor_fns",
+           [&] {
+             for (int i = 0; i < msg.field_count(); ++i) {
+               GenerateAccessorMsgImpl(ctx, *msg.field(i), AccessorCase::OWNED);
+             }
+             for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
+               GenerateOneofAccessors(ctx, *msg.real_oneof_decl(i),
+                                      AccessorCase::OWNED);
+             }
+           }},
+          {"nested_in_msg",
+           [&] {
+             // If we have no nested types, enums, or oneofs, bail out without
+             // emitting an empty mod some_msg.
+             if (msg.nested_type_count() == 0 && msg.enum_type_count() == 0 &&
+                 msg.extension_count() == 0 &&
+                 msg.real_oneof_decl_count() == 0) {
+               return;
+             }
+             ctx.PushModule(RsSafeName(CamelToSnakeCase(msg.name())));
+             ctx.Emit(
+                 {{"nested_msgs",
+                   [&] {
+                     for (int i = 0; i < msg.nested_type_count(); ++i) {
+                       GenerateRs(ctx, *msg.nested_type(i), pool);
+                     }
+                   }},
+                  {"nested_enums",
+                   [&] {
+                     for (int i = 0; i < msg.enum_type_count(); ++i) {
+                       GenerateEnumDefinition(ctx, *msg.enum_type(i),
+                                              upb_msg.enum_type(i));
+                     }
+                   }},
+                  {"nested_extensions",
+                   [&] {
+                     for (int i = 0; i < msg.extension_count(); ++i) {
+                       GenerateRs(ctx, *msg.extension(i), pool);
+                     }
+                   }},
+                  {"oneofs",
+                   [&] {
+                     for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
+                       GenerateOneofDefinition(ctx, *msg.real_oneof_decl(i));
+                     }
+                   }}},
+                 R"rs(
+                   $nested_msgs$
+                   $nested_enums$
+                   $nested_extensions$
+
+                   $oneofs$
+                )rs");
+             ctx.PopModule();
+           }},
+          {"accessor_fns_for_views",
+           [&] {
+             for (int i = 0; i < msg.field_count(); ++i) {
+               GenerateAccessorMsgImpl(ctx, *msg.field(i), AccessorCase::VIEW);
+             }
+             for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
+               GenerateOneofAccessors(ctx, *msg.real_oneof_decl(i),
+                                      AccessorCase::VIEW);
+             }
+           }},
+          {"accessor_fns_for_muts",
+           [&] {
+             for (int i = 0; i < msg.field_count(); ++i) {
+               GenerateAccessorMsgImpl(ctx, *msg.field(i), AccessorCase::MUT);
+             }
+             for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
+               GenerateOneofAccessors(ctx, *msg.real_oneof_decl(i),
+                                      AccessorCase::MUT);
+             }
+           }},
+          {"into_proxied_impl", [&] { IntoProxiedForMessage(ctx, msg); }},
+          {"generated_message_trait_impls",
+           [&] {
+             if (ctx.is_upb()) {
+               UpbGeneratedMessageTraitImpls(ctx, msg, pool);
+             } else {
+               CppGeneratedMessageTraitImpls(ctx, msg);
+             }
+           }},
+          {"type_conversions_impl", [&] { TypeConversions(ctx, msg); }},
+          {"unwrap_upb",
+           [&] {
+             if (ctx.is_upb()) {
+               ctx.Emit(
+                   ".unwrap_or_else(||$pbr$::ScratchSpace::zeroed_block())");
+             }
+           }},
+          {"upb_arena",
+           [&] {
+             if (ctx.is_upb()) {
+               ctx.Emit(", inner.msg_ref().arena().raw()");
+             }
+           }},
+      },
+      R"rs(
+        #[allow(non_camel_case_types)]
+        pub struct $MsgDefinition$ {
+          inner: $pbr$::OwnedMessageInner<$Msg$>
+        }
+
+        impl $pb$::Message for $Msg$ {
+          type MessageView<'msg> = $Msg$View<'msg>;
+          type MessageMut<'msg> = $Msg$Mut<'msg>;
+        }
+
+        impl $std$::default::Default for $Msg$ {
+          fn default() -> Self {
+            Self::new()
+          }
+        }
+
+        impl $std$::fmt::Debug for $Msg$ {
+          fn fmt(&self, f: &mut $std$::fmt::Formatter<'_>) -> $std$::fmt::Result {
+            $Msg::debug$
+          }
+        }
+
+        // SAFETY:
+        // - `$Msg$` is `Sync` because it does not implement interior mutability.
+        //    Neither does `$Msg$Mut`.
+        unsafe impl $std$::marker::Sync for $Msg$ {}
+
+        // SAFETY:
+        // - `$Msg$` is `Send` because it uniquely owns its arena and does
+        //   not use thread-local data.
+        unsafe impl $std$::marker::Send for $Msg$ {}
+
+        impl $pb$::Proxied for $Msg$ {
+          type View<'msg> = $Msg$View<'msg>;
+        }
+
+        impl $pbi$::SealedInternal for $Msg$ {}
+
+        impl $pb$::MutProxied for $Msg$ {
+          type Mut<'msg> = $Msg$Mut<'msg>;
+        }
+
+        #[derive(Copy, Clone)]
+        #[allow(dead_code)]
+        pub struct $Msg$View<'msg> {
+          inner: $pbr$::MessageViewInner<'msg, $Msg$>,
+        }
+
+        impl<'msg> $pbi$::SealedInternal for $Msg$View<'msg> {}
+
+        impl<'msg> $pb$::MessageView<'msg> for $Msg$View<'msg> {
+          type Message = $Msg$;
+        }
+
+        impl $std$::fmt::Debug for $Msg$View<'_> {
+          fn fmt(&self, f: &mut $std$::fmt::Formatter<'_>) -> $std$::fmt::Result {
+            $Msg::debug$
+          }
+        }
+
+        impl $std$::default::Default for $Msg$View<'_> {
+          fn default() -> $Msg$View<'static> {
+            $default_instance_impl$.into()
+          }
+        }
+
+        impl<'msg> From<$pbr$::MessageViewInner<'msg, $Msg$>> for $Msg$View<'msg> {
+          fn from(inner: $pbr$::MessageViewInner<'msg, $Msg$>) -> Self {
+            Self { inner }
+          }
+        }
+
+        #[allow(dead_code)]
+        impl<'msg> $Msg$View<'msg> {
+          $raw_msg$
+
+          pub fn to_owned(&self) -> $Msg$ {
+            $pb$::IntoProxied::into_proxied(*self, $pbi$::Private)
+          }
+
+          $accessor_fns_for_views$
+        }
+
+        // SAFETY:
+        // - `$Msg$View` is `Sync` because it does not support mutation.
+        unsafe impl $std$::marker::Sync for $Msg$View<'_> {}
+
+        // SAFETY:
+        // - `$Msg$View` is `Send` because while its alive a `$Msg$Mut` cannot.
+        // - `$Msg$View` does not use thread-local data.
+        unsafe impl $std$::marker::Send for $Msg$View<'_> {}
+
+        impl<'msg> $pb$::AsView for $Msg$View<'msg> {
+          type Proxied = $Msg$;
+          fn as_view(&self) -> $pb$::View<'msg, $Msg$> {
+            *self
+          }
+        }
+
+        impl<'msg> $pb$::IntoView<'msg> for $Msg$View<'msg> {
+          fn into_view<'shorter>(self) -> $Msg$View<'shorter>
+          where
+              'msg: 'shorter {
+            self
+          }
+        }
+
+        $into_proxied_impl$
+
+        $type_conversions_impl$
+
+        #[allow(dead_code)]
+        #[allow(non_camel_case_types)]
+        pub struct $Msg$Mut<'msg> {
+          inner: $pbr$::MessageMutInner<'msg, $Msg$>,
+        }
+
+        impl<'msg> $pbi$::SealedInternal for $Msg$Mut<'msg> {}
+
+        impl<'msg> $pb$::MessageMut<'msg> for $Msg$Mut<'msg> {
+          type Message = $Msg$;
+        }
+
+        impl $std$::fmt::Debug for $Msg$Mut<'_> {
+          fn fmt(&self, f: &mut $std$::fmt::Formatter<'_>) -> $std$::fmt::Result {
+            $Msg::debug$
+          }
+        }
+
+        impl<'msg> From<$pbr$::MessageMutInner<'msg, $Msg$>> for $Msg$Mut<'msg> {
+          fn from(inner: $pbr$::MessageMutInner<'msg, $Msg$>) -> Self {
+            Self { inner }
+          }
+        }
+
+        #[allow(dead_code)]
+        impl<'msg> $Msg$Mut<'msg> {
+          $raw_msg$
+
+          #[doc(hidden)]
+          pub fn as_message_mut_inner(&mut self, _private: $pbi$::Private)
+            -> $pbr$::MessageMutInner<'msg, $Msg$> {
+            self.inner.reborrow()
+          }
+
+          pub fn to_owned(&self) -> $Msg$ {
+            $pb$::AsView::as_view(self).to_owned()
+          }
+
+          $accessor_fns_for_muts$
+        }
+
+        //~ Note that upb Arenas are not threadsafe but we mark `$Msg$Mut` as
+        //~ both Send and Sync.
+        //~ We currently ensure safety by designing the API to ensure that no two
+        //~ threads can hold a reference to MsgMuts with the same arena.
+        // SAFETY:
+        // - `$Msg$Mut` does not perform any shared mutation.
+        unsafe impl $std$::marker::Send for $Msg$Mut<'_> {}
+
+        // SAFETY:
+        // - `$Msg$Mut` does not perform any shared mutation.
+        unsafe impl $std$::marker::Sync for $Msg$Mut<'_> {}
+
+        impl<'msg> $pb$::AsView for $Msg$Mut<'msg> {
+          type Proxied = $Msg$;
+          fn as_view(&self) -> $pb$::View<'_, $Msg$> {
+            self.inner.as_view().into()
+          }
+        }
+
+        impl<'msg> $pb$::IntoView<'msg> for $Msg$Mut<'msg> {
+          fn into_view<'shorter>(self) -> $pb$::View<'shorter, $Msg$>
+          where
+              'msg: 'shorter {
+            self.inner.as_view().into()
+          }
+        }
+
+        impl<'msg> $pb$::AsMut for $Msg$Mut<'msg> {
+          type MutProxied = $Msg$;
+          fn as_mut(&mut self) -> $Msg$Mut<'msg> {
+            self.inner.reborrow().into()
+          }
+        }
+
+        impl<'msg> $pb$::IntoMut<'msg> for $Msg$Mut<'msg> {
+          fn into_mut<'shorter>(self) -> $Msg$Mut<'shorter>
+          where
+              'msg: 'shorter {
+            self
+          }
+        }
+
+        #[allow(dead_code)]
+        impl $Msg$ {
+          pub fn new() -> Self {
+            $Msg::new$
+          }
+
+          $raw_msg$
+
+          #[doc(hidden)]
+          pub fn as_message_mut_inner(&mut self, _private: $pbi$::Private) -> $pbr$::MessageMutInner<'_, $Msg$> {
+            $pbr$::MessageMutInner::mut_of_owned(&mut self.inner)
+          }
+
+          pub fn as_view(&self) -> $Msg$View<'_> {
+            $pbr$::MessageViewInner::view_of_owned(&self.inner).into()
+          }
+
+          pub fn as_mut(&mut self) -> $Msg$Mut<'_> {
+            $pbr$::MessageMutInner::mut_of_owned(&mut self.inner).into()
+          }
+
+          $accessor_fns$
+        }  // impl $Msg$
+
+        //~ We implement drop unconditionally, so that `$Msg$: Drop` regardless
+        //~ of kernel.
+        impl $std$::ops::Drop for $Msg$ {
+          #[inline]
+          fn drop(&mut self) {
+            $Msg::drop$
+          }
+        }
+
+        impl $std$::clone::Clone for $Msg$ {
+          fn clone(&self) -> Self {
+            self.as_view().to_owned()
+          }
+        }
+
+        impl $pb$::AsView for $Msg$ {
+          type Proxied = Self;
+          fn as_view(&self) -> $Msg$View<'_> {
+            self.as_view()
+          }
+        }
+
+        impl $pb$::AsMut for $Msg$ {
+          type MutProxied = Self;
+          fn as_mut(&mut self) -> $Msg$Mut<'_> {
+            self.as_mut()
+          }
+        }
+
+        $generated_message_trait_impls$
+
+        $nested_in_msg$
+      )rs");
+
+  if (ctx.is_cpp()) {
+    ctx.Emit(
+        {
+            {"message_externs", [&] { CppMessageExterns(ctx, msg); }},
             {"accessor_externs",
              [&] {
                for (int i = 0; i < msg.field_count(); ++i) {
                  GenerateAccessorExternC(ctx, *msg.field(i));
-                 ctx.printer().PrintRaw("\n");
                }
              }},
             {"oneof_externs",
              [&] {
                for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
                  GenerateOneofExternC(ctx, *msg.real_oneof_decl(i));
-                 ctx.printer().PrintRaw("\n");
                }
              }},
-            {"nested_in_msg",
-             [&] {
-               // If we have no nested types or oneofs, bail out without
-               // emitting an empty mod SomeMsg_.
-               if (msg.nested_type_count() == 0 &&
-                   msg.real_oneof_decl_count() == 0) {
-                 return;
-               }
-               ctx.Emit(
-                   {{"Msg", msg.name()},
-                    {"nested_msgs",
-                     [&] {
-                       for (int i = 0; i < msg.nested_type_count(); ++i) {
-                         GenerateRs(ctx, *msg.nested_type(i));
-                       }
-                     }},
-                    {"nested_enums",
-                     [&] {
-                       for (int i = 0; i < msg.enum_type_count(); ++i) {
-                         GenerateEnumDefinition(ctx, *msg.enum_type(i));
-                       }
-                     }},
-                    {"oneofs",
-                     [&] {
-                       for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
-                         GenerateOneofDefinition(ctx, *msg.real_oneof_decl(i));
-                       }
-                     }}},
-                   R"rs(
-                 #[allow(non_snake_case)]
-                 pub mod $Msg$_ {
-                   $nested_msgs$
-                   $nested_enums$
-
-                   $oneofs$
-                 }  // mod $Msg$_
-                )rs");
-             }},
-            {"accessor_fns_for_views",
-             [&] { AccessorsForViewOrMut(ctx, msg, false); }},
-            {"accessor_fns_for_muts",
-             [&] { AccessorsForViewOrMut(ctx, msg, true); }}},
-           R"rs(
-        #[allow(non_camel_case_types)]
-        // TODO: Implement support for debug redaction
-        #[derive(Debug)]
-        pub struct $Msg$ {
-          inner: $pbr$::MessageInner
-        }
-
-        // SAFETY:
-        // - `$Msg$` does not provide shared mutation with its arena.
-        // - `$Msg$Mut` is not `Send`, and so even in the presence of mutator
-        //   splitting, synchronous access of an arena that would conflict with
-        //   field access is impossible.
-        unsafe impl Sync for $Msg$ {}
-
-        impl $pb$::Proxied for $Msg$ {
-          type View<'a> = $Msg$View<'a>;
-          type Mut<'a> = $Msg$Mut<'a>;
-        }
-
-        #[derive(Debug, Copy, Clone)]
-        #[allow(dead_code)]
-        pub struct $Msg$View<'a> {
-          msg: $pbi$::RawMessage,
-          _phantom: $Phantom$<&'a ()>,
-        }
-
-        impl<'a> $Msg$View<'a> {
-          #[doc(hidden)]
-          pub fn new(_private: $pbi$::Private, msg: $pbi$::RawMessage) -> Self {
-            Self { msg, _phantom: std::marker::PhantomData }
-          }
-          $accessor_fns_for_views$
-        }
-
-        // SAFETY:
-        // - `$Msg$View` does not perform any mutation.
-        // - While a `$Msg$View` exists, a `$Msg$Mut` can't exist to mutate
-        //   the arena that would conflict with field access.
-        // - `$Msg$Mut` is not `Send`, and so even in the presence of mutator
-        //   splitting, synchronous access of an arena is impossible.
-        unsafe impl Sync for $Msg$View<'_> {}
-        unsafe impl Send for $Msg$View<'_> {}
-
-        impl<'a> $pb$::ViewProxy<'a> for $Msg$View<'a> {
-          type Proxied = $Msg$;
-
-          fn as_view(&self) -> $pb$::View<'a, $Msg$> {
-            *self
-          }
-          fn into_view<'shorter>(self) -> $pb$::View<'shorter, $Msg$> where 'a: 'shorter {
-            self
-          }
-        }
-
-        impl<'a> $pb$::SettableValue<$Msg$> for $Msg$View<'a> {
-          fn set_on<'b>(self, _private: $pb$::__internal::Private, _mutator: $pb$::Mut<'b, $Msg$>)
-          where
-            $Msg$: 'b {
-            todo!()
-          }
-        }
-
-        #[derive(Debug)]
-        #[allow(dead_code)]
-        #[allow(non_camel_case_types)]
-        pub struct $Msg$Mut<'a> {
-          inner: $pbr$::MutatorMessageRef<'a>,
-        }
-
-        impl<'a> $Msg$Mut<'a> {
-          #[doc(hidden)]
-          pub fn new(_private: $pbi$::Private,
-                     parent: &'a mut $pbr$::MessageInner,
-                     msg: $pbi$::RawMessage)
-            -> Self {
-            Self {
-              inner: $pbr$::MutatorMessageRef::from_parent(
-                       $pbi$::Private, parent, msg)
-            }
-          }
-          $accessor_fns_for_muts$
-        }
-
-        // SAFETY:
-        // - `$Msg$Mut` does not perform any shared mutation.
-        // - `$Msg$Mut` is not `Send`, and so even in the presence of mutator
-        //   splitting, synchronous access of an arena is impossible.
-        unsafe impl Sync for $Msg$Mut<'_> {}
-
-        impl<'a> $pb$::MutProxy<'a> for $Msg$Mut<'a> {
-          fn as_mut(&mut self) -> $pb$::Mut<'_, $Msg$> {
-            $Msg$Mut { inner: self.inner }
-          }
-          fn into_mut<'shorter>(self) -> $pb$::Mut<'shorter, $Msg$> where 'a : 'shorter { self }
-        }
-
-        impl<'a> $pb$::ViewProxy<'a> for $Msg$Mut<'a> {
-          type Proxied = $Msg$;
-          fn as_view(&self) -> $pb$::View<'_, $Msg$> {
-            $Msg$View { msg: self.inner.msg(), _phantom: std::marker::PhantomData }
-          }
-          fn into_view<'shorter>(self) -> $pb$::View<'shorter, $Msg$> where 'a: 'shorter {
-            $Msg$View { msg: self.inner.msg(), _phantom: std::marker::PhantomData }
-          }
-        }
-
-        impl $Msg$ {
-          pub fn new() -> Self {
-            $Msg::new$
-          }
-
-          pub fn serialize(&self) -> $pbr$::SerializedData {
-            $Msg::serialize$
-          }
-          pub fn deserialize(&mut self, data: &[u8]) -> Result<(), $pb$::ParseError> {
-            $Msg::deserialize$
-          }
-
-          $accessor_fns$
-
-          $oneof_accessor_fns$
-        }  // impl $Msg$
-
-        //~ We implement drop unconditionally, so that `$Msg$: Drop` regardless
-        //~ of kernel.
-        impl $std$::ops::Drop for $Msg$ {
-          fn drop(&mut self) {
-            $Msg::drop$
-          }
-        }
-
-        extern "C" {
-          $Msg_externs$
-
+        },
+        R"rs(
+        unsafe extern "C" {
+          $message_externs$
           $accessor_externs$
-
           $oneof_externs$
-        }  // extern "C" for $Msg$
-
-        $nested_in_msg$
-      )rs");
-
-  if (ctx.is_cpp()) {
-    ctx.printer().PrintRaw("\n");
-    ctx.Emit({{"Msg", msg.name()}}, R"rs(
-      impl $Msg$ {
-        pub fn __unstable_wrap_cpp_grant_permission_to_break(msg: $pbi$::RawMessage) -> Self {
-          Self { inner: $pbr$::MessageInner { msg } }
         }
-        pub fn __unstable_cpp_repr_grant_permission_to_break(&mut self) -> $pbi$::RawMessage {
-          self.inner.msg
+    )rs");
+  }
+
+  ctx.printer().PrintRaw("\n");
+  if (ctx.is_cpp()) {
+
+    ctx.Emit({{"Msg", MessageRsName(msg)}},
+             R"rs(
+      impl<'a> $Msg$Mut<'a> {
+        pub unsafe fn __unstable_wrap_cpp_grant_permission_to_break(
+            msg: &'a mut *mut $std$::ffi::c_void) -> Self {
+          let raw = $pbr$::RawMessage::new(*msg as *mut _).unwrap();
+          let inner = unsafe { $pbr$::MessageMutInner::wrap_raw(raw) };
+          Self { inner }
+        }
+        pub fn __unstable_cpp_repr_grant_permission_to_break(self) -> *mut $std$::ffi::c_void {
+          self.raw_msg().as_ptr() as *mut _
+        }
+      }
+
+      impl<'a> $Msg$View<'a> {
+        pub fn __unstable_wrap_cpp_grant_permission_to_break(
+          msg: &'a *const $std$::ffi::c_void) -> Self {
+          let raw = $pbr$::RawMessage::new(*msg as *mut _).unwrap();
+          let inner = unsafe { $pbr$::MessageViewInner::wrap_raw(raw) };
+          inner.into()
+        }
+        pub fn __unstable_cpp_repr_grant_permission_to_break(self) -> *const $std$::ffi::c_void {
+          self.inner.raw().as_ptr() as *const _
+        }
+      }
+
+      impl $pb$::OwnedMessageInterop for $Msg$ {
+        unsafe fn __unstable_take_ownership_of_raw_message(msg: *mut $std$::ffi::c_void) -> Self {
+          let raw = $pbr$::RawMessage::new(msg as *mut _).unwrap();
+          let inner = unsafe { $pbr$::OwnedMessageInner::<$Msg$>::wrap_raw(raw) };
+          Self { inner }
+        }
+
+        fn __unstable_leak_raw_message(self) -> *mut $std$::ffi::c_void {
+          let s = $std$::mem::ManuallyDrop::new(self);
+          s.raw_msg().as_ptr() as *mut _
+        }
+      }
+
+      impl<'a> $pb$::MessageViewInterop<'a> for $Msg$View<'a> {
+        unsafe fn __unstable_wrap_raw_message(
+          msg: &'a *const $std$::ffi::c_void) -> Self {
+          let raw = $pbr$::RawMessage::new(*msg as *mut _).unwrap();
+          let inner = unsafe { $pbr$::MessageViewInner::wrap_raw(raw) };
+          inner.into()
+        }
+        unsafe fn __unstable_wrap_raw_message_unchecked_lifetime(
+          msg: *const $std$::ffi::c_void) -> Self {
+          let raw = $pbr$::RawMessage::new(msg as *mut _).unwrap();
+          let inner = unsafe { $pbr$::MessageViewInner::wrap_raw(raw) };
+          inner.into()
+        }
+        fn __unstable_as_raw_message(&self) -> *const $std$::ffi::c_void {
+          self.inner.raw().as_ptr() as *const _
         }
       }
     )rs");
+
+    if (!ctx.opts().force_lite_runtime &&
+        msg.file()->options().optimize_for() != FileOptions::LITE_RUNTIME) {
+      ctx.Emit({{"Msg", MessageRsName(msg)}},
+               R"rs(
+              impl $pb$::MessageDescriptorInterop for $Msg$ {
+                fn __unstable_get_descriptor() -> *const $std$::ffi::c_void {
+                  unsafe { $pbr$::proto2_rust_Message_get_descriptor(<$Msg$View as $std$::default::Default>::default().raw_msg()) }
+                }
+              }
+            )rs");
+    }
   }
-}
+}  // NOLINT(readability/fn_size)
 
 // Generates code for a particular message in `.pb.thunk.cc`.
 void GenerateThunksCc(Context& ctx, const Descriptor& msg) {
   ABSL_CHECK(ctx.is_cpp());
   if (msg.map_key() != nullptr) {
-    ABSL_LOG(WARNING) << "unsupported map field: " << msg.full_name();
+    // Don't generate code for synthetic MapEntry messages.
     return;
   }
 
+  // Approaches to put the extern "C" in any R"cc()cc" badly confuse either
+  // clang-format or VSCode highlighting. Emit this as a vanilla raw string to
+  // avoid any issues.
+  ctx.Emit(R"(extern "C" {
+  )");
+
   ctx.Emit(
-      {{"abi", "\"C\""},  // Workaround for syntax highlight bug in VSCode.
-       {"Msg", msg.name()},
-       {"QualifiedMsg", cpp::QualifiedClassName(&msg)},
+      {{"QualifiedMsg", cpp::QualifiedClassName(&msg)},
        {"new_thunk", ThunkName(ctx, msg, "new")},
-       {"delete_thunk", ThunkName(ctx, msg, "delete")},
-       {"serialize_thunk", ThunkName(ctx, msg, "serialize")},
-       {"deserialize_thunk", ThunkName(ctx, msg, "deserialize")},
-       {"nested_msg_thunks",
-        [&] {
-          for (int i = 0; i < msg.nested_type_count(); ++i) {
-            GenerateThunksCc(ctx, *msg.nested_type(i));
-          }
-        }},
-       {"accessor_thunks",
-        [&] {
-          for (int i = 0; i < msg.field_count(); ++i) {
-            GenerateAccessorThunkCc(ctx, *msg.field(i));
-          }
-        }},
-       {"oneof_thunks",
-        [&] {
-          for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
-            GenerateOneofThunkCc(ctx, *msg.real_oneof_decl(i));
-          }
-        }}},
+       {"default_instance_thunk", ThunkName(ctx, msg, "default_instance")}},
       R"cc(
-        //~ $abi$ is a workaround for a syntax highlight bug in VSCode. However,
-        //~ that confuses clang-format (it refuses to keep the newline after
-        //~ `$abi${`). Disabling clang-format for the block.
-        // clang-format off
-        extern $abi$ {
         void* $new_thunk$() { return new $QualifiedMsg$(); }
-        void $delete_thunk$(void* ptr) { delete static_cast<$QualifiedMsg$*>(ptr); }
-        google::protobuf::rust_internal::SerializedData $serialize_thunk$($QualifiedMsg$* msg) {
-          return google::protobuf::rust_internal::SerializeMsg(msg);
+
+        const google::protobuf::MessageLite* $default_instance_thunk$() {
+          return &$QualifiedMsg$::default_instance();
         }
-        bool $deserialize_thunk$($QualifiedMsg$* msg,
-                                 google::protobuf::rust_internal::SerializedData data) {
-          return msg->ParseFromArray(data.data, data.len);
-        }
-
-        $accessor_thunks$
-
-        $oneof_thunks$
-        }  // extern $abi$
-        // clang-format on
-
-        $nested_msg_thunks$
       )cc");
+
+  for (int i = 0; i < msg.field_count(); ++i) {
+    GenerateAccessorThunkCc(ctx, *msg.field(i));
+  }
+
+  for (int i = 0; i < msg.real_oneof_decl_count(); ++i) {
+    GenerateOneofThunkCc(ctx, *msg.real_oneof_decl(i));
+  }
+
+  for (int i = 0; i < msg.extension_count(); ++i) {
+    GenerateThunksCc(ctx, *msg.extension(i));
+  }
+
+  ctx.Emit(R"(}  //extern "C"
+  )");
+
+  // Recursively generate the thunks for any nested messages.
+  for (int i = 0; i < msg.nested_type_count(); ++i) {
+    GenerateThunksCc(ctx, *msg.nested_type(i));
+  }
 }
 
 }  // namespace rust

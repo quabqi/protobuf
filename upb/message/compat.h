@@ -11,6 +11,7 @@
 #include <stdint.h>
 
 #include "upb/message/message.h"
+#include "upb/mini_table/extension.h"
 
 // Must be last.
 #include "upb/port/def.inc"
@@ -24,12 +25,13 @@
 extern "C" {
 #endif
 
-const upb_Extension* upb_Message_ExtensionByIndex(const upb_Message* msg,
-                                                  size_t index);
-
-// Returns the extension with the given field number, or NULL on failure.
-const upb_Extension* upb_Message_FindExtensionByNumber(const upb_Message* msg,
-                                                       uint32_t field_number);
+// Same as upb_Message_NextExtension but iterates in reverse wire order
+bool upb_Message_NextExtensionReverse(const upb_Message* msg,
+                                      const upb_MiniTableExtension** result,
+                                      uintptr_t* iter);
+// Returns the minitable with the given field number, or NULL on failure.
+const upb_MiniTableExtension* upb_Message_FindExtensionByNumber(
+    const upb_Message* msg, uint32_t field_number);
 
 #ifdef __cplusplus
 } /* extern "C" */

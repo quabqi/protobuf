@@ -10,13 +10,15 @@
 
 #include <string>
 
-#include "google/protobuf/testing/googletest.h"
+#include <gtest/gtest.h>
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
 #include "google/protobuf/io/zero_copy_stream.h"
 #include "google/protobuf/io/zero_copy_stream_impl_lite.h"
 #include "google/protobuf/util/message_differencer.h"
+
+#include "google/protobuf/testing/googletest.h"
 
 namespace google {
 namespace protobuf {
@@ -35,7 +37,7 @@ inline std::string GetTestDataPath(absl::string_view path) {
 template <typename ProtoType>
 bool EqualsToSerialized(const ProtoType& message, const std::string& data) {
   ProtoType other;
-  other.ParsePartialFromString(data);
+  ABSL_CHECK(other.ParsePartialFromString(data));
   return util::MessageDifferencer::Equals(message, other);
 }
 
@@ -46,7 +48,7 @@ class BoundedArrayInputStream : public io::ZeroCopyInputStream {
  public:
   BoundedArrayInputStream(const void* data, int size)
       : stream_(data, size), bound_(size) {}
-  ~BoundedArrayInputStream() override {}
+  ~BoundedArrayInputStream() override = default;
 
   bool Next(const void** data, int* size) override {
     ABSL_CHECK_LT(stream_.ByteCount(), bound_);

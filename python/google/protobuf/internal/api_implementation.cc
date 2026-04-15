@@ -51,7 +51,7 @@ static const char kModuleDocstring[] =
 "\n"
 "It complements api_implementation.py by setting defaults using compile-time\n"
 "constants defined in C, such that one can set defaults at compilation\n"
-"(e.g. with blaze flag --copt=-DPYTHON_PROTO2_CPP_IMPL_V2).";
+"(e.g. with bazel flag --copt=-DPYTHON_PROTO2_CPP_IMPL_V2).";
 
 #if PY_MAJOR_VERSION >= 3
 static struct PyModuleDef _module = {
@@ -85,6 +85,13 @@ extern "C" {
     if (module == NULL) {
       return INITFUNC_ERRORVAL;
     }
+
+#ifdef Py_GIL_DISABLED
+    if (PyUnstable_Module_SetGIL(module, Py_MOD_GIL_NOT_USED) != 0) {
+      Py_DECREF(module);
+      return NULL;
+    }
+#endif  // Py_GIL_DISABLED
 
     // Adds the module variable "api_version".
     if (PyModule_AddIntConstant(

@@ -5,12 +5,10 @@
 // license that can be found in the LICENSE file or at
 // https://developers.google.com/open-source/licenses/bsd
 
-#import "GPBTestUtilities.h"
-
 #import <objc/runtime.h>
 
 #import "GPBMessage.h"
-
+#import "GPBTestUtilities.h"
 #import "objectivec/Tests/MapProto2Unittest.pbobjc.h"
 #import "objectivec/Tests/MapUnittest.pbobjc.h"
 #import "objectivec/Tests/Unittest.pbobjc.h"
@@ -415,28 +413,20 @@
 
   XCTAssertFalse(msg.hasOptionalEnum);
   XCTAssertEqual(msg.repeatedEnumArray.count, 0U);
-  XCTAssertEqual(msg.oOneOfCase, Message3_O_OneOfCase_GPBUnsetOneOfCase);
+  XCTAssertEqual(msg.oOneOfCase, (int32_t)Message3_O_OneOfCase_GPBUnsetOneOfCase);
 
   // All the values should be in unknown fields.
 
-  GPBUnknownFieldSet *unknownFields = msg.unknownFields;
-
-  XCTAssertEqual([unknownFields countOfFields], 3U);
-  XCTAssertTrue([unknownFields hasField:Message2_FieldNumber_OptionalEnum]);
-  XCTAssertTrue([unknownFields hasField:Message2_FieldNumber_RepeatedEnumArray]);
-  XCTAssertTrue([unknownFields hasField:Message2_FieldNumber_OneofEnum]);
-
-  GPBUnknownField *field = [unknownFields getField:Message2_FieldNumber_OptionalEnum];
-  XCTAssertEqual(field.varintList.count, 1U);
-  XCTAssertEqual([field.varintList valueAtIndex:0], (uint64_t)Message3_Enum_Extra3);
-
-  field = [unknownFields getField:Message2_FieldNumber_RepeatedEnumArray];
-  XCTAssertEqual(field.varintList.count, 1U);
-  XCTAssertEqual([field.varintList valueAtIndex:0], (uint64_t)Message3_Enum_Extra3);
-
-  field = [unknownFields getField:Message2_FieldNumber_OneofEnum];
-  XCTAssertEqual(field.varintList.count, 1U);
-  XCTAssertEqual([field.varintList valueAtIndex:0], (uint64_t)Message3_Enum_Extra3);
+  GPBUnknownFields *ufs = [[GPBUnknownFields alloc] initFromMessage:msg];
+  XCTAssertEqual(ufs.count, 3U);
+  uint64_t varint;
+  XCTAssertTrue([ufs getFirst:Message2_FieldNumber_OptionalEnum varint:&varint]);
+  XCTAssertEqual(varint, (uint64_t)Message3_Enum_Extra3);
+  XCTAssertTrue([ufs getFirst:Message2_FieldNumber_RepeatedEnumArray varint:&varint]);
+  XCTAssertEqual(varint, (uint64_t)Message3_Enum_Extra3);
+  XCTAssertTrue([ufs getFirst:Message2_FieldNumber_OneofEnum varint:&varint]);
+  XCTAssertEqual(varint, (uint64_t)Message3_Enum_Extra3);
+  [ufs release];
 
   [msg release];
   [orig release];
@@ -1053,7 +1043,11 @@
   NSError *error = nil;
   TestPackedExtensions *packedParse =
       [TestPackedExtensions parseFromData:unpackedData
+#if defined(GPB_UNITTEST_USE_C_FUNCTION_FOR_EXTENSIONS)
+                        extensionRegistry:Objc_Protobuf_Tests_UnittestRoot_Registry()
+#else
                         extensionRegistry:[UnittestRoot extensionRegistry]
+#endif
                                     error:&error];
   XCTAssertNotNil(packedParse);
   XCTAssertNil(error);
@@ -1062,7 +1056,11 @@
   error = nil;
   TestUnpackedExtensions *unpackedParsed =
       [TestUnpackedExtensions parseFromData:packedData
+#if defined(GPB_UNITTEST_USE_C_FUNCTION_FOR_EXTENSIONS)
+                          extensionRegistry:Objc_Protobuf_Tests_UnittestRoot_Registry()
+#else
                           extensionRegistry:[UnittestRoot extensionRegistry]
+#endif
                                       error:&error];
   XCTAssertNotNil(unpackedParsed);
   XCTAssertNil(error);
@@ -1093,7 +1091,11 @@
   error = nil;
   TestPackedExtensions *extsParse =
       [TestPackedExtensions parseFromData:fieldsData
+#if defined(GPB_UNITTEST_USE_C_FUNCTION_FOR_EXTENSIONS)
+                        extensionRegistry:Objc_Protobuf_Tests_UnittestRoot_Registry()
+#else
                         extensionRegistry:[UnittestRoot extensionRegistry]
+#endif
                                     error:&error];
   XCTAssertNotNil(extsParse);
   XCTAssertNil(error);
@@ -1121,7 +1123,11 @@
 
   TestUnpackedExtensions *extsParse =
       [TestUnpackedExtensions parseFromData:fieldsData
+#if defined(GPB_UNITTEST_USE_C_FUNCTION_FOR_EXTENSIONS)
+                          extensionRegistry:Objc_Protobuf_Tests_UnittestRoot_Registry()
+#else
                           extensionRegistry:[UnittestRoot extensionRegistry]
+#endif
                                       error:NULL];
   XCTAssertNotNil(extsParse);
   XCTAssertEqualObjects(extsParse, extsOrig);
@@ -1398,7 +1404,9 @@
   int32_t val = -1;
   XCTAssertTrue([msg1.knownMapField getEnum:&val forKey:0]);
   XCTAssertEqual(val, Proto2MapEnum_Proto2MapEnumFoo);
-  XCTAssertEqual(msg1.unknownFields.countOfFields, 1U);
+  GPBUnknownFields *ufs = [[GPBUnknownFields alloc] initFromMessage:msg1];
+  XCTAssertEqual(ufs.count, 1U);
+  [ufs release];
 
   data = [msg1 data];
   TestEnumMapPlusExtra *msg2 = [TestEnumMapPlusExtra parseFromData:data error:NULL];
@@ -1410,7 +1418,9 @@
   XCTAssertEqual(msg2.unknownMapField.count, 1U);
   XCTAssertTrue([msg2.unknownMapField getEnum:&val forKey:0]);
   XCTAssertEqual(val, Proto2MapEnumPlusExtra_EProto2MapEnumExtra);
-  XCTAssertEqual(msg2.unknownFields.countOfFields, 0U);
+  ufs = [[GPBUnknownFields alloc] initFromMessage:msg2];
+  XCTAssertTrue(ufs.empty);
+  [ufs release];
 
   XCTAssertEqualObjects(orig, msg2);
 

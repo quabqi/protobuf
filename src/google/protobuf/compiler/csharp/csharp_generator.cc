@@ -10,11 +10,11 @@
 #include <sstream>
 
 #include "google/protobuf/compiler/code_generator.h"
-#include "google/protobuf/descriptor.h"
 #include "google/protobuf/compiler/csharp/csharp_helpers.h"
 #include "google/protobuf/compiler/csharp/csharp_options.h"
 #include "google/protobuf/compiler/csharp/csharp_reflection_class.h"
 #include "google/protobuf/compiler/csharp/names.h"
+#include "google/protobuf/descriptor.h"
 #include "google/protobuf/descriptor.pb.h"
 #include "google/protobuf/io/printer.h"
 #include "google/protobuf/io/zero_copy_stream.h"
@@ -24,11 +24,12 @@ namespace protobuf {
 namespace compiler {
 namespace csharp {
 
-Generator::Generator() {}
-Generator::~Generator() {}
+Generator::Generator() = default;
+Generator::~Generator() = default;
 
 uint64_t Generator::GetSupportedFeatures() const {
-  return CodeGenerator::Feature::FEATURE_PROTO3_OPTIONAL;
+  return CodeGenerator::Feature::FEATURE_PROTO3_OPTIONAL |
+         CodeGenerator::Feature::FEATURE_SUPPORTS_EDITIONS;
 }
 
 void GenerateFile(const FileDescriptor* file, io::Printer* printer,
@@ -56,6 +57,8 @@ bool Generator::Generate(const FileDescriptor* file,
       cli_options.internal_access = true;
     } else if (options[i].first == "serializable") {
       cli_options.serializable = true;
+    } else if (options[i].first == "experimental_strip_nonfunctional_codegen") {
+      cli_options.strip_nonfunctional_codegen = true;
     } else {
       *error = absl::StrCat("Unknown generator option: ", options[i].first);
       return false;

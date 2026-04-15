@@ -10,13 +10,13 @@
 #include <sstream>
 
 #include "google/protobuf/compiler/code_generator.h"
-#include "google/protobuf/descriptor.h"
-#include "google/protobuf/wire_format.h"
 #include "google/protobuf/compiler/csharp/csharp_doc_comment.h"
 #include "google/protobuf/compiler/csharp/csharp_helpers.h"
+#include "google/protobuf/descriptor.h"
 #include "google/protobuf/descriptor.pb.h"
 #include "google/protobuf/io/printer.h"
 #include "google/protobuf/io/zero_copy_stream.h"
+#include "google/protobuf/wire_format.h"
 
 namespace google {
 namespace protobuf {
@@ -28,9 +28,7 @@ RepeatedEnumFieldGenerator::RepeatedEnumFieldGenerator(
     : FieldGeneratorBase(descriptor, presenceIndex, options) {
 }
 
-RepeatedEnumFieldGenerator::~RepeatedEnumFieldGenerator() {
-
-}
+RepeatedEnumFieldGenerator::~RepeatedEnumFieldGenerator() = default;
 
 void RepeatedEnumFieldGenerator::GenerateMembers(io::Printer* printer) {
   printer->Print(
@@ -39,7 +37,7 @@ void RepeatedEnumFieldGenerator::GenerateMembers(io::Printer* printer) {
     "    = pb::FieldCodec.ForEnum($tag$, x => (int) x, x => ($type_name$) x);\n");
   printer->Print(variables_,
     "private readonly pbc::RepeatedField<$type_name$> $name$_ = new pbc::RepeatedField<$type_name$>();\n");
-  WritePropertyDocComment(printer, descriptor_);
+  WritePropertyDocComment(printer, options(), descriptor_);
   AddPublicMemberAttributes(printer);
   printer->Print(
     variables_,
@@ -107,7 +105,7 @@ void RepeatedEnumFieldGenerator::GenerateCloningCode(io::Printer* printer) {
 }
 
 void RepeatedEnumFieldGenerator::GenerateExtensionCode(io::Printer* printer) {
-  WritePropertyDocComment(printer, descriptor_);
+  WritePropertyDocComment(printer, options(), descriptor_);
   AddDeprecatedFlag(printer);
   printer->Print(
     variables_,

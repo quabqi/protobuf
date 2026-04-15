@@ -7,10 +7,12 @@
 
 package com.google.protobuf;
 
+import static java.nio.charset.StandardCharsets.ISO_8859_1;
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 import java.lang.reflect.Method;
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
-import java.nio.charset.Charset;
 import java.util.AbstractList;
 import java.util.AbstractMap;
 import java.util.AbstractSet;
@@ -32,11 +34,8 @@ public final class Internal {
 
   private Internal() {}
 
-  static final Charset US_ASCII = Charset.forName("US-ASCII");
-  static final Charset UTF_8 = Charset.forName("UTF-8");
-  static final Charset ISO_8859_1 = Charset.forName("ISO-8859-1");
-
   /** Throws an appropriate {@link NullPointerException} if the given objects is {@code null}. */
+  @CanIgnoreReturnValue
   static <T> T checkNotNull(T obj) {
     if (obj == null) {
       throw new NullPointerException();
@@ -45,11 +44,25 @@ public final class Internal {
   }
 
   /** Throws an appropriate {@link NullPointerException} if the given objects is {@code null}. */
+  @CanIgnoreReturnValue
   static <T> T checkNotNull(T obj, String message) {
     if (obj == null) {
       throw new NullPointerException(message);
     }
     return obj;
+  }
+
+  /**
+   * Throws an {@link IllegalArgumentException} for unrecognized enum values.
+   *
+   * <p>Used from Enum.getNumber().
+   *
+   * @return nothing, but typed as int, so we can "return" the result of this method directly from
+   * Enum.getNumber(), generating smaller dex code for every enum.
+   */
+  @DoNotInline
+  public static int throwCannotGetNumberOfUnrecognized() {
+    throw new IllegalArgumentException("Can't get the number of an unknown enum value.");
   }
 
   /**
@@ -372,6 +385,36 @@ public final class Internal {
   }
 
   /**
+   * Provides an immutable view of {@code List<T>} around an {@code IntList}.
+   *
+   * <p>Protobuf internal. Used in protobuf generated code only.
+   */
+  public static class IntListAdapter<T> extends AbstractList<T> {
+    /** Convert individual elements of the List from int to T. */
+    public interface IntConverter<T> {
+      T convert(int from);
+    }
+
+    private final IntList fromList;
+    private final IntConverter<T> converter;
+
+    public IntListAdapter(IntList fromList, IntConverter<T> converter) {
+      this.fromList = fromList;
+      this.converter = converter;
+    }
+
+    @Override
+    public T get(int index) {
+      return converter.convert(fromList.getInt(index));
+    }
+
+    @Override
+    public int size() {
+      return fromList.size();
+    }
+  }
+
+  /**
    * Provides an immutable view of {@code List<T>} around a {@code List<F>}.
    *
    * <p>Protobuf internal. Used in protobuf generated code only.
@@ -525,7 +568,8 @@ public final class Internal {
       }
 
       @Override
-      public boolean equals(Object o) {
+      public boolean equals(
+              Object o) {
         if (o == this) {
           return true;
         }

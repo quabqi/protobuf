@@ -1,18 +1,20 @@
 """Starlark utilities for working with other build systems."""
 
 load("@bazel_skylib//lib:paths.bzl", "paths")
-load("@rules_pkg//:providers.bzl", "PackageFilegroupInfo", "PackageFilesInfo")
+load("@rules_pkg//pkg:providers.bzl", "PackageFilegroupInfo", "PackageFilesInfo")
+load("//bazel/common:proto_info.bzl", "ProtoInfo")
 load(":cc_dist_library.bzl", "CcFileList")
 
 ################################################################################
 # Macro to create CMake and Automake source lists.
 ################################################################################
 
-def gen_file_lists(name, out_stem, **kwargs):
+def gen_file_lists(name, out_stem, testonly = False, **kwargs):
     gen_cmake_file_lists(
         name = name + "_cmake",
         out = out_stem + ".cmake",
         source_prefix = "${protobuf_SOURCE_DIR}/",
+        testonly = testonly,
         **kwargs
     )
     native.filegroup(
@@ -21,6 +23,7 @@ def gen_file_lists(name, out_stem, **kwargs):
             out_stem + ".cmake",
         ],
         visibility = ["//src:__pkg__"],
+        testonly = testonly,
     )
 
 ################################################################################
@@ -310,8 +313,8 @@ For C++ rules, the following are generated:
 
 For proto_library, the following are generated:
     {libname}_proto_srcs: contains the srcs from the `proto_library` rule.
-    {libname}_srcs: contains syntesized paths for generated C++ sources.
-    {libname}_hdrs: contains syntesized paths for generated C++ headers.
+    {libname}_srcs: contains synthesized paths for generated C++ sources.
+    {libname}_hdrs: contains synthesized paths for generated C++ headers.
 
 """,
     implementation = _cmake_file_list_impl,

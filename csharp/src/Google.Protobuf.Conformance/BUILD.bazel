@@ -1,5 +1,5 @@
+load("@rules_pkg//pkg:mappings.bzl", "pkg_files", "strip_prefix")
 load("//build_defs:internal_shell.bzl", "inline_sh_binary")
-load("@rules_pkg//:mappings.bzl", "pkg_files", "strip_prefix")
 
 inline_sh_binary(
     name = "build_conformance_test",
@@ -76,19 +76,4 @@ filegroup(
     srcs = CONFORMANCE_DEPS,
     data = [":package_conformance_test"],
     visibility = ["//conformance:__subpackages__"],
-)
-
-################################################################################
-# Distribution files
-################################################################################
-
-pkg_files(
-    name = "dist_files",
-    srcs = [
-        "BUILD.bazel",
-        "Google.Protobuf.Conformance.csproj",
-        "Program.cs",
-    ],
-    strip_prefix = strip_prefix.from_root(""),
-    visibility = ["//csharp:__pkg__"],
 )

@@ -12,18 +12,25 @@
 #ifndef GOOGLE_PROTOBUF_COMPILER_CPP_FIELD_H__
 #define GOOGLE_PROTOBUF_COMPILER_CPP_FIELD_H__
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <tuple>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/absl_check.h"
+#include "absl/strings/string_view.h"
+#include "absl/types/optional.h"
+#include "absl/types/span.h"
 #include "google/protobuf/compiler/cpp/helpers.h"
 #include "google/protobuf/compiler/cpp/options.h"
+#include "google/protobuf/cpp_features.pb.h"
 #include "google/protobuf/descriptor.h"
 #include "google/protobuf/io/printer.h"
+
+// Must be included last.
+#include "google/protobuf/port_def.inc"
 
 namespace google {
 namespace protobuf {
@@ -44,8 +51,7 @@ class FieldGeneratorBase {
   // variable instead of calling GetArena()'
   enum class GeneratorFunction { kMergeFrom };
 
-  FieldGeneratorBase(const FieldDescriptor* descriptor, const Options& options,
-                     MessageSCCAnalyzer* scc_analyzer);
+  FieldGeneratorBase(const FieldDescriptor* field, const Options& options);
 
   FieldGeneratorBase(const FieldGeneratorBase&) = delete;
   FieldGeneratorBase& operator=(const FieldGeneratorBase&) = delete;
@@ -65,6 +71,9 @@ class FieldGeneratorBase {
   // Returns true if the provided field has a trivial zero default.
   // I.e., the field can be initialized with `memset(&field, 0, sizeof(field))`
   bool has_trivial_zero_default() const { return has_trivial_zero_default_; }
+
+  // Returns true if the provided field can be initialized with `= {}`.
+  bool has_brace_default_assign() const { return has_brace_default_assign_; }
 
   // Returns true if the field is a singular or repeated message.
   // This includes group message types. To explicitly check if a message
@@ -88,9 +97,6 @@ class FieldGeneratorBase {
 
   // Returns true if the field API uses bytes (void) instead of chars.
   bool is_bytes() const { return is_bytes_; }
-
-  // Returns the public API string type for string fields.
-  FieldOptions::CType string_type() const { return string_type_; }
 
   // Returns true if this field is part of a oneof field.
   bool is_oneof() const { return is_oneof_; }
@@ -133,13 +139,11 @@ class FieldGeneratorBase {
 
   virtual void GenerateSwappingCode(io::Printer* p) const = 0;
 
-  virtual void GenerateConstructorCode(io::Printer* p) const = 0;
-
   virtual void GenerateDestructorCode(io::Printer* p) const {}
 
   virtual void GenerateArenaDestructorCode(io::Printer* p) const {
     ABSL_CHECK(NeedsArenaDestructor() == ArenaDtorNeeds::kNone)
-        << descriptor_->cpp_type_name();
+        << field_->cpp_type_name();
   }
 
   // Generates constexpr member initialization code, e.g.: `foo_{5}`.
@@ -179,7 +183,10 @@ class FieldGeneratorBase {
 
   virtual void GenerateByteSize(io::Printer* p) const = 0;
 
-  virtual void GenerateIsInitialized(io::Printer* p) const {}
+  virtual void GenerateIsInitialized(io::Printer* p) const {
+    ABSL_CHECK(!NeedsIsInitialized());
+  }
+  virtual bool NeedsIsInitialized() const { return false; }
 
   virtual bool IsInlined() const { return false; }
 
@@ -188,16 +195,20 @@ class FieldGeneratorBase {
   }
 
  protected:
-  const FieldDescriptor* descriptor_;
+  const FieldDescriptor* field_;
   const Options& options_;
-  MessageSCCAnalyzer* scc_;
   absl::flat_hash_map<absl::string_view, std::string> variables_;
+
+  pb::CppFeatures::StringType GetDeclaredStringType() const;
+
+  static io::Printer::Sub InternalMetadataOffsetSub(io::Printer* p);
 
  private:
   bool should_split_ = false;
   bool is_trivial_ = false;
   bool has_trivial_value_ = false;
   bool has_trivial_zero_default_ = false;
+  bool has_brace_default_assign_ = false;
   bool is_message_ = false;
   bool is_group_ = false;
   bool is_string_ = false;
@@ -207,7 +218,6 @@ class FieldGeneratorBase {
   bool is_lazy_ = false;
   bool is_weak_ = false;
   bool is_oneof_ = false;
-  FieldOptions::CType string_type_ = FieldOptions::STRING;
   bool has_default_constexpr_constructor_ = false;
 };
 
@@ -245,9 +255,14 @@ class FieldGenerator {
   // Properties: see FieldGeneratorBase for documentation
   bool should_split() const { return impl_->should_split(); }
   bool is_trivial() const { return impl_->is_trivial(); }
+  // Returns true if the field has trivial copy construction.
+  bool has_trivial_copy() const { return is_trivial(); }
   bool has_trivial_value() const { return impl_->has_trivial_value(); }
   bool has_trivial_zero_default() const {
     return impl_->has_trivial_zero_default();
+  }
+  bool has_brace_default_assign() const {
+    return impl_->has_brace_default_assign();
   }
   bool is_message() const { return impl_->is_message(); }
   bool is_group() const { return impl_->is_group(); }
@@ -256,7 +271,6 @@ class FieldGenerator {
   bool is_foreign() const { return impl_->is_foreign(); }
   bool is_string() const { return impl_->is_string(); }
   bool is_bytes() const { return impl_->is_bytes(); }
-  FieldOptions::CType string_type() const { return impl_->string_type(); }
   bool is_oneof() const { return impl_->is_oneof(); }
   bool is_inlined() const { return impl_->is_inlined(); }
   bool has_default_constexpr_constructor() const {
@@ -380,16 +394,6 @@ class FieldGenerator {
     impl_->GenerateSwappingCode(p);
   }
 
-  // Generates initialization code for private members declared by
-  // GeneratePrivateMembers().
-  //
-  // These go into the message class's SharedCtor() method, invoked by each of
-  // the generated constructors.
-  void GenerateConstructorCode(io::Printer* p) const {
-    auto vars = PushVarsForCall(p);
-    impl_->GenerateConstructorCode(p);
-  }
-
   // Generates any code that needs to go in the class's SharedDtor() method,
   // invoked by the destructor.
   void GenerateDestructorCode(io::Printer* p) const {
@@ -471,6 +475,8 @@ class FieldGenerator {
     impl_->GenerateIsInitialized(p);
   }
 
+  bool NeedsIsInitialized() const { return impl_->NeedsIsInitialized(); }
+
   // TODO: Document this properly.
   bool IsInlined() const { return impl_->IsInlined(); }
 
@@ -482,9 +488,7 @@ class FieldGenerator {
  private:
   friend class FieldGeneratorTable;
   FieldGenerator(const FieldDescriptor* field, const Options& options,
-                 MessageSCCAnalyzer* scc_analyzer,
-                 absl::optional<uint32_t> hasbit_index,
-                 absl::optional<uint32_t> inlined_string_index);
+                 absl::optional<uint32_t> hasbit_index);
 
   std::unique_ptr<FieldGeneratorBase> impl_;
   std::vector<io::Printer::Sub> field_vars_;
@@ -501,13 +505,12 @@ class FieldGeneratorTable {
   FieldGeneratorTable(const FieldGeneratorTable&) = delete;
   FieldGeneratorTable& operator=(const FieldGeneratorTable&) = delete;
 
-  void Build(const Options& options, MessageSCCAnalyzer* scc_analyzer,
-             absl::Span<const int32_t> has_bit_indices,
-             absl::Span<const int32_t> inlined_string_indices);
+  void Build(const Options& options, absl::Span<const int32_t> has_bit_indices);
 
   const FieldGenerator& get(const FieldDescriptor* field) const {
     ABSL_CHECK_EQ(field->containing_type(), descriptor_);
-    return fields_[field->index()];
+    ABSL_DCHECK_GE(field->index(), 0);
+    return fields_[static_cast<size_t>(field->index())];
   }
 
  private:
@@ -524,5 +527,7 @@ std::vector<io::Printer::Sub> FieldVars(const FieldDescriptor* field,
 }  // namespace compiler
 }  // namespace protobuf
 }  // namespace google
+
+#include "google/protobuf/port_undef.inc"
 
 #endif  // GOOGLE_PROTOBUF_COMPILER_CPP_FIELD_H__

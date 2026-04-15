@@ -5,15 +5,16 @@
 // license that can be found in the LICENSE file or at
 // https://developers.google.com/open-source/licenses/bsd
 
+#import "GPBRootObject.h"
 #import "GPBRootObject_PackagePrivate.h"
 
+#import <CoreFoundation/CoreFoundation.h>
 #import <objc/runtime.h>
 #import <os/lock.h>
 
-#import <CoreFoundation/CoreFoundation.h>
-
 #import "GPBDescriptor.h"
 #import "GPBExtensionRegistry.h"
+#import "GPBUtilities.h"
 #import "GPBUtilities_PackagePrivate.h"
 
 @interface GPBExtensionDescriptor (GPBRootObject)
@@ -120,6 +121,8 @@ static GPBExtensionRegistry *gDefaultExtensionRegistry = NULL;
 }
 
 + (void)globallyRegisterExtension:(GPBExtensionDescriptor *)field {
+  // Note: in c_function mode, this is an unused code path, since extension class methods are no
+  // longer in generated headers.
   const char *key = [field singletonNameC];
   os_unfair_lock_lock(&gExtensionSingletonDictionaryLock);
   CFDictionarySetValue(gExtensionSingletonDictionary, key, field);
@@ -127,6 +130,9 @@ static GPBExtensionRegistry *gDefaultExtensionRegistry = NULL;
 }
 
 static id ExtensionForName(id self, SEL _cmd) {
+  // Note: in c_function mode, this is an unused code path, since extension class methods are no
+  // longer in generated headers.
+
   // Really fast way of doing "classname_selName".
   // This came up as a hotspot (creation of NSString *) when accessing a
   // lot of extensions.
@@ -173,6 +179,9 @@ static id ExtensionForName(id self, SEL _cmd) {
 }
 
 BOOL GPBResolveExtensionClassMethod(Class self, SEL sel) {
+  // Note: in c_function mode, this is an unused code path, since extension class methods are no
+  // longer in generated headers.
+
   // Another option would be to register the extensions with the class at
   // globallyRegisterExtension:
   // Timing the two solutions, this solution turned out to be much faster

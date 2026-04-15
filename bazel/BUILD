@@ -1,73 +1,89 @@
-# Copyright (c) 2009-2021, Google LLC
-# All rights reserved.
-#
-# Use of this source code is governed by a BSD-style
-# license that can be found in the LICENSE file or at
-# https://developers.google.com/open-source/licenses/bsd
-
-load("@rules_python//python:defs.bzl", "py_binary")
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
-load("@bazel_skylib//lib:selects.bzl", "selects")
 
-# begin:google_only
-# package(default_applicable_licenses = ["//upb:license"])
-# end:google_only
+package(default_applicable_licenses = ["//:license"])
 
-licenses(["notice"])
-
-# begin:google_only
-# selects.config_setting_group(
-#     name = "android_opt",
-#     match_all = [
-#         "//tools/cc_target_os:android",
-#         "//tools/compilation_mode:opt",
-#     ],
-# )
-# end:google_only
-
-py_binary(
-    name = "amalgamate",
-    srcs = ["amalgamate.py"],
-    visibility = ["//upb:__pkg__"],
+bzl_library(
+    name = "proto_library_bzl",
+    srcs = ["proto_library.bzl"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//bazel/private:proto_library_rule_bzl",
+    ],
 )
 
-# py_proto_library() is private rule, only intended for internal use by upb.
-# Hopefully py_proto_library() will eventually be available in rules_proto or
-# another upstream package.
+bzl_library(
+    name = "cc_proto_library_bzl",
+    srcs = ["cc_proto_library.bzl"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//bazel/private/oss:cc_proto_library_bzl",
+    ],
+)
+
+bzl_library(
+    name = "java_proto_library_bzl",
+    srcs = ["java_proto_library.bzl"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//bazel/private:java_proto_library_bzl",
+    ],
+)
+
+bzl_library(
+    name = "java_lite_proto_library_bzl",
+    srcs = ["java_lite_proto_library.bzl"],
+    visibility = ["//visibility:public"],
+    deps = ["//bazel/private:java_lite_proto_library_bzl"],
+)
+
 bzl_library(
     name = "py_proto_library_bzl",
     srcs = ["py_proto_library.bzl"],
-    deps = [
-        "@rules_python//python:py_info_bzl",
-    ],
-)
-
-bzl_library(
-    name = "upb_proto_library_internal_bzl",
-    srcs = [
-        "upb_proto_library_internal/aspect.bzl",
-        "upb_proto_library_internal/cc_library_func.bzl",
-        "upb_proto_library_internal/copts.bzl",
-        "upb_proto_library_internal/rule.bzl",
-    ],
-    deps = [
-        "@bazel_skylib//lib:paths",
-        "@bazel_tools//tools/cpp:toolchain_utils.bzl",
-        "@rules_proto//proto:defs",
-    ],
-)
-
-bzl_library(
-    name = "upb_proto_library_bzl",
-    srcs = [
-        "upb_c_proto_library.bzl",
-        "upb_minitable_proto_library.bzl",
-        "upb_proto_library.bzl",
-        "upb_proto_reflection_library.bzl",
-    ],
     visibility = ["//visibility:public"],
     deps = [
-        ":upb_proto_library_internal_bzl",
-        "@rules_proto//proto:defs",
+        "//bazel/private/oss:py_proto_library_bzl",
+    ],
+)
+
+bzl_library(
+    name = "upb_c_proto_library_bzl",
+    srcs = ["upb_c_proto_library.bzl"],
+    deprecation = "Use upb/bazel:upb_proto_library_bzl instead",
+    visibility = ["//visibility:public"],
+    deps = ["//upb/bazel:upb_proto_library_bzl"],
+)
+
+bzl_library(
+    name = "upb_proto_reflection_library_bzl",
+    srcs = ["upb_proto_reflection_library.bzl"],
+    deprecation = "Use upb/bazel:upb_proto_library_bzl instead",
+    visibility = ["//visibility:public"],
+    deps = ["//upb/bazel:upb_proto_library_bzl"],
+)
+
+bzl_library(
+    name = "proto_descriptor_set_bzl",
+    srcs = ["proto_descriptor_set.bzl"],
+    visibility = ["//visibility:public"],
+)
+
+# The data in this target is exposed in //bazel/private:for_bazel_tests
+filegroup(
+    name = "for_bazel_tests",
+    testonly = True,
+    srcs = [
+        "BUILD",
+        ":cc_proto_library_bzl",
+        ":java_lite_proto_library_bzl",
+        ":proto_library_bzl",
+        ":py_proto_library_bzl",
+        ":upb_c_proto_library_bzl",
+        ":upb_proto_reflection_library_bzl",
+        "//bazel/common:for_bazel_tests",
+        "//bazel/flags:for_bazel_tests",
+        "//bazel/toolchains:for_bazel_tests",
+    ],
+    visibility = [
+        "//bazel/private:__pkg__",
     ],
 )

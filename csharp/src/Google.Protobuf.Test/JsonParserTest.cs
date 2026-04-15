@@ -13,7 +13,9 @@ using Google.Protobuf.WellKnownTypes;
 using NUnit.Framework;
 using ProtobufTestMessages.Proto2;
 using ProtobufTestMessages.Proto3;
+using ProtobufUnittest;
 using System;
+using System.Linq;
 using UnitTest.Issues.TestProtos;
 
 namespace Google.Protobuf
@@ -839,7 +841,17 @@ namespace Google.Protobuf
         [Test]
         public void Any_NoTypeUrl()
         {
+            // Currently if we're missing the type URL (@type) we return an empty Any message
+            // regardless of other fields. In the future we could potentially fail if there's no
+            // type URL but other fields are present.
             string json = "{ \"foo\": \"bar\" }";
+            Assert.AreEqual(new Any(), Any.Parser.ParseJson(json));
+        }
+
+        [Test]
+        public void Any_BadTypeUrl()
+        {
+            string json = "{ \"@type\": \"no-slash\" }";
             Assert.Throws<InvalidProtocolBufferException>(() => Any.Parser.ParseJson(json));
         }
 
@@ -896,6 +908,41 @@ namespace Google.Protobuf
         }
 
         [Test]
+        public void MaliciousRecursionOfObjectsInValue()
+        {
+            int depth = 64;
+            string json = string.Join("", Enumerable.Repeat("{\"a\":", depth)) +
+                "{}" +
+                string.Join("", Enumerable.Repeat("}", depth));
+
+            // Each object level requires a Value and a Struct, so we can effectively only
+            // handle half as much depth as in a normal message.
+            var sufficientLimitParser = new JsonParser(new JsonParser.Settings(depth * 2 + 1));
+            sufficientLimitParser.Parse<Value>(json);
+
+            var insufficientLimitParser = new JsonParser(new JsonParser.Settings(depth * 2));
+            Assert.Throws<InvalidProtocolBufferException>(() => insufficientLimitParser.Parse<Value>(json));
+        }
+
+        [Test]
+        public void MaliciousRecursionOfArraysInValue()
+        {
+            int depth = 64;
+            string json = new string('[', depth) + new string(']', depth);
+
+            // Each array level requires a Value and a ListValue, so we can effectively only
+            // handle half as much depth as in a normal message. The limits here are slightly different than
+            // the limits for object recursion due to implementation details, but the inconsistency
+            // is preferred over the complexity of making arrays and objects match precisely in
+            // limit handling.
+            var sufficientLimitParser = new JsonParser(new JsonParser.Settings(depth * 2 - 1));
+            sufficientLimitParser.Parse<Value>(json);
+
+            var insufficientLimitParser = new JsonParser(new JsonParser.Settings(depth * 2 - 2));
+            Assert.Throws<InvalidProtocolBufferException>(() => insufficientLimitParser.Parse<Value>(json));
+        }
+
+        [Test]
         [TestCase("AQI")]
         [TestCase("_-==")]
         public void Bytes_InvalidBase64(string badBase64)
@@ -925,6 +972,52 @@ namespace Google.Protobuf
         }
 
         [Test]
+        public void Enum_InvalidString_IgnoreUnknownFields()
+        {
+            // When ignoring unknown fields, invalid enum value strings are ignored too.
+            // This test uses TestProto3Optional so we can check we're not just setting the field to the 0 value.
+            var parser = new JsonParser(JsonParser.Settings.Default.WithIgnoreUnknownFields(true));
+            string json = "{ \"optionalNestedEnum\": \"NOT_A_VALID_VALUE\" }";
+            var parsed = parser.Parse<TestProto3Optional>(json);
+            Assert.IsFalse(parsed.HasOptionalNestedEnum);
+        }
+
+        [Test]
+        public void RepeatedEnum_InvalidString_IgnoreUnknownFields()
+        {
+            // When ignoring unknown fields, invalid enum value strings are ignored too.
+            // For a repeated field, the value is removed entirely.
+            var parser = new JsonParser(JsonParser.Settings.Default.WithIgnoreUnknownFields(true));
+            string json = "{ \"repeatedForeignEnum\": [ \"FOREIGN_FOO\", \"NOT_A_VALID_VALUE\", \"FOREIGN_BAR\" ] }";
+            var parsed = parser.Parse<TestAllTypes>(json);
+            var expected = new[] { TestProtos.ForeignEnum.ForeignFoo, TestProtos.ForeignEnum.ForeignBar };
+            Assert.AreEqual(expected, parsed.RepeatedForeignEnum);
+        }
+
+        [Test]
+        public void EnumValuedMap_InvalidString_IgnoreUnknownFields()
+        {
+            // When ignoring unknown fields, invalid enum value strings are ignored too.
+            // For a map field, the entry is removed entirely.
+            var parser = new JsonParser(JsonParser.Settings.Default.WithIgnoreUnknownFields(true));
+            string json = "{ \"mapInt32Enum\": { \"1\": \"MAP_ENUM_BAR\", \"2\": \"NOT_A_VALID_VALUE\" } }";
+            var parsed = parser.Parse<TestMap>(json);
+            Assert.AreEqual(1, parsed.MapInt32Enum.Count);
+            Assert.AreEqual(MapEnum.Bar, parsed.MapInt32Enum[1]);
+            Assert.False(parsed.MapInt32Enum.ContainsKey(2));
+        }
+
+        [Test]
+        public void Enum_InvalidNumber_IgnoreUnknownFields()
+        {
+            // Even when ignoring unknown fields, fail for non-integer numeric values, because
+            // they could *never* be valid.
+            var parser = new JsonParser(JsonParser.Settings.Default.WithIgnoreUnknownFields(true));
+            string json = "{ \"singleForeignEnum\": 5.5 }";
+            Assert.Throws<InvalidProtocolBufferException>(() => parser.Parse<TestAllTypes>(json));
+        }
+
+        [Test]
         public void OneofDuplicate_Invalid()
         {
             string json = "{ \"oneofString\": \"x\", \"oneofUint32\": 10 }";
@@ -946,6 +1039,16 @@ namespace Google.Protobuf
             Assert.False(parsed.HasFieldName10);
             Assert.True(parsed.HasFieldName13);
             Assert.AreEqual(0, parsed.FieldName13);
+        }
+
+        [Test]
+        public void Proto2_Group()
+        {
+            string json = "{ \"data\": { \"groupInt32\": 2, \"groupUint32\": 3 } }";
+            var parsed = TestAllTypesProto2.Parser.ParseJson(json);
+            Assert.True(parsed.HasData);
+            Assert.AreEqual(2, parsed.Data.GroupInt32);
+            Assert.AreEqual(3, parsed.Data.GroupUint32);
         }
 
         [Test]

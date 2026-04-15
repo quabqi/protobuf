@@ -12,8 +12,13 @@
 #include "google/protobuf/generated_message_util.h"
 
 #include <atomic>
-#include <limits>
-#include <vector>
+#include <climits>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <type_traits>
+
+#include "absl/log/absl_check.h"
 
 #include "google/protobuf/arenastring.h"
 #include "google/protobuf/extension_set.h"
@@ -28,42 +33,56 @@
 // Must be included last
 #include "google/protobuf/port_def.inc"
 
+#ifndef PROTOBUF_PRAGMA_INIT_SEG_DONE
 PROTOBUF_PRAGMA_INIT_SEG
+#define PROTOBUF_PRAGMA_INIT_SEG_DONE
+#endif
 
 
 namespace google {
 namespace protobuf {
 namespace internal {
 
-void DestroyMessage(const void* message) {
-  static_cast<const MessageLite*>(message)->~MessageLite();
-}
 void DestroyString(const void* s) {
   static_cast<const std::string*>(s)->~basic_string();
 }
-
-PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT
-    PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 ExplicitlyConstructedArenaString
-        fixed_address_empty_string{};  // NOLINT
 
 
 PROTOBUF_ATTRIBUTE_NO_DESTROY PROTOBUF_CONSTINIT const EmptyCord empty_cord_;
 
 #if defined(PROTOBUF_DESCRIPTOR_WEAK_MESSAGES_ALLOWED)
+
+// We add a single dummy entry to guarantee the section is never empty.
+struct DummyWeakDefault {
+  const MessageGlobalsBase* m;
+  WeakDescriptorDefaultTail tail;
+};
+DummyWeakDefault dummy_weak_default __attribute__((section("pb_defaults"))) = {
+    nullptr, {&dummy_weak_default.m, sizeof(dummy_weak_default)}};
+
 extern "C" {
-// We add a single dummy writer to guarantee the section is never empty.
-WeakDefaultWriter dummy_writer
-    __attribute__((section("pb_defaults"))) = {&dummy_writer.source, nullptr};
-// When using --descriptor_implicit_weak_messages we expect the writer objects
-// to live in the `pb_defaults` section. We load them all using the
+// When using --descriptor_implicit_weak_messages we expect the default instance
+// objects to live in the `pb_defaults` section. We load them all using the
 // __start/__end symbols provided by the linker.
-extern const WeakDefaultWriter __start_pb_defaults;
-extern const WeakDefaultWriter __stop_pb_defaults;
+// Each object is its own type and size, so we use a `char` to load them
+// appropriately.
+extern const char __start_pb_defaults;
+extern const char __stop_pb_defaults;
 }
 static void InitWeakDefaults() {
-  StrongPointer(&dummy_writer);  // force link the dummy writer.
-  for (auto it = &__start_pb_defaults; it != &__stop_pb_defaults; ++it) {
-    *it->destination = it->source;
+  // force link the dummy entry.
+  StrongPointer<DummyWeakDefault*, &dummy_weak_default>();
+  // We don't know the size of each object, but we know the layout of the tail.
+  // It contains a WeakDescriptorDefaultTail object.
+  // As such, we iterate the section backwards.
+  const char* start = &__start_pb_defaults;
+  const char* end = &__stop_pb_defaults;
+  while (start != end) {
+    auto* tail = reinterpret_cast<const WeakDescriptorDefaultTail*>(end) - 1;
+    end -= tail->size;
+    const MessageGlobalsBase* instance =
+        reinterpret_cast<const MessageGlobalsBase*>(end);
+    *tail->target = instance;
   }
 }
 #else
@@ -72,8 +91,9 @@ void InitWeakDefaults() {}
 
 PROTOBUF_CONSTINIT std::atomic<bool> init_protobuf_defaults_state{false};
 static bool InitProtobufDefaultsImpl() {
-  fixed_address_empty_string.DefaultConstruct();
-  OnShutdownDestroyString(fixed_address_empty_string.get_mutable());
+  if (auto* to_destroy = fixed_address_empty_string.Init()) {
+    OnShutdownDestroyString(to_destroy);
+  }
   InitWeakDefaults();
 
 
@@ -90,17 +110,6 @@ void InitProtobufDefaultsSlow() {
 // there is any object with reflection.
 PROTOBUF_ATTRIBUTE_INIT_PRIORITY1 static std::true_type init_empty_string =
     (InitProtobufDefaultsSlow(), std::true_type{});
-
-size_t StringSpaceUsedExcludingSelfLong(const std::string& str) {
-  const void* start = &str;
-  const void* end = &str + 1;
-  if (start <= str.data() && str.data() < end) {
-    // The string's data is stored inside the string object itself.
-    return 0;
-  } else {
-    return str.capacity();
-  }
-}
 
 template <typename T>
 const T& Get(const void* ptr) {
@@ -377,13 +386,14 @@ MessageLite* DuplicateIfNonNullInternal(MessageLite* message) {
   }
 }
 
-void GenericSwap(MessageLite* m1, MessageLite* m2) {
-  std::unique_ptr<MessageLite> tmp(m1->New());
-  tmp->CheckTypeAndMergeFrom(*m1);
-  m1->Clear();
-  m1->CheckTypeAndMergeFrom(*m2);
-  m2->Clear();
-  m2->CheckTypeAndMergeFrom(*tmp);
+void GenericSwap(MessageLite* lhs, MessageLite* rhs) {
+  const ClassData* class_data = GetClassData(*lhs);
+  std::unique_ptr<MessageLite> tmp(class_data->New(nullptr));
+  tmp->MergeFromWithClassData(*lhs, class_data);
+  lhs->Clear();
+  lhs->MergeFromWithClassData(*rhs, class_data);
+  rhs->Clear();
+  rhs->MergeFromWithClassData(*tmp, class_data);
 }
 
 // Returns a message owned by this Arena.  This may require Own()ing or
@@ -402,6 +412,19 @@ MessageLite* GetOwnedMessageInternal(Arena* message_arena,
     ret->CheckTypeAndMergeFrom(*submessage);
     return ret;
   }
+}
+
+internal::ExtensionSet* PrivateAccess::GetExtensionSet(MessageLite* msg) {
+  return const_cast<internal::ExtensionSet*>(
+      GetExtensionSet(static_cast<const MessageLite*>(msg)));
+}
+
+const internal::ExtensionSet* PrivateAccess::GetExtensionSet(
+    const MessageLite* msg) {
+  auto* tc_table = msg->GetTcParseTable();
+  if (tc_table->extension_offset == 0) return nullptr;
+  return reinterpret_cast<const internal::ExtensionSet*>(
+      reinterpret_cast<const char*>(msg) + tc_table->extension_offset);
 }
 
 }  // namespace internal

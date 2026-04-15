@@ -17,36 +17,39 @@
 #include "absl/types/span.h"
 #include "google/protobuf/compiler/rust/context.h"
 #include "google/protobuf/descriptor.h"
+#include "upb/reflection/def.hpp"
 
 namespace google {
 namespace protobuf {
 namespace compiler {
 namespace rust {
 
-void GenerateEnumDefinition(Context& ctx, const EnumDescriptor& desc);
+// Generates code for a particular enum in `.pb.rs`.
+void GenerateEnumDefinition(Context& ctx, const EnumDescriptor& desc,
+                            upb::EnumDefPtr upb_enum);
 
 // An enum value with a unique number and any aliases for it.
 struct RustEnumValue {
   // The canonical CamelCase name in Rust.
   std::string name;
+  const EnumValueDescriptor* desc;
   int32_t number;
-  std::vector<std::string> aliases;
+  std::vector<std::pair<std::string, const EnumValueDescriptor*>> aliases;
+};
+
+// Binds an enumerator with name `name`, value `number, and original descriptor
+// `desc`.
+struct EnumValueInput {
+  absl::string_view name;
+  int32_t number;
+  const EnumValueDescriptor* desc = nullptr;
 };
 
 // Returns the list of rust enum variants to produce, along with their aliases.
 // Performs name normalization, deduplication, and alias determination.
 // The `number` and `name` of every returned `RustEnumValue` is unique.
-std::vector<RustEnumValue> EnumValues(
-    absl::string_view enum_name,
-    absl::Span<const std::pair<absl::string_view, int32_t>> values);
-
-// TODO: Unify these with other case-conversion functions.
-
-// Converts an UpperCamel or lowerCamel string to a snake_case string.
-std::string CamelToSnakeCase(absl::string_view input);
-
-// Converts a SCREAMING_SNAKE_CASE string to an UpperCamelCase string.
-std::string ScreamingSnakeToUpperCamelCase(absl::string_view input);
+std::vector<RustEnumValue> EnumValues(absl::string_view enum_name,
+                                      absl::Span<const EnumValueInput> values);
 
 }  // namespace rust
 }  // namespace compiler

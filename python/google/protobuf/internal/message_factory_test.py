@@ -65,7 +65,7 @@ class MessageFactoryTest(unittest.TestCase):
     result = cls.FromString(reserialized)
     self.assertEqual(msg, result)
 
-  def testGetPrototype(self):
+  def testGetMessageClass(self):
     db = descriptor_database.DescriptorDatabase()
     pool = descriptor_pool.DescriptorPool(db)
     db.Add(self.factory_test1_fd)
@@ -77,6 +77,20 @@ class MessageFactoryTest(unittest.TestCase):
     cls2 = message_factory.GetMessageClass(pool.FindMessageTypeByName(
         'google.protobuf.python.internal.Factory2Message'))
     self.assertTrue(cls is cls2)
+
+  def testGetMessageClassWrongInput(self):
+    # Check MessageClass deals with invalid input.
+
+    # we need an object that contains name attribute to fool the MessageClass
+    # logic into creating a class.
+    class FakeDescriptor:
+      name = 'FakeDescriptor'
+
+    # Unfortunatly, python protos behave a little differently from the c
+    # implementations. both c implementation raise TypeError while the python
+    # implementation raises AttributeError.
+    with self.assertRaises((TypeError, AttributeError)):
+      message_factory.GetMessageClass(FakeDescriptor())
 
   def testGetExistingPrototype(self):
     # Get Existing Prototype should not create a new class.
@@ -179,19 +193,39 @@ class MessageFactoryTest(unittest.TestCase):
         type_name='Duplicate',
         extendee='Container',
     )
-    pool.Add(f)
 
-    with self.assertRaises(Exception) as cm:
-      message_factory.GetMessageClassesForFiles([f.name], pool)
+    if api_implementation.Type() == 'upb':
+      with self.assertRaisesRegex(
+          TypeError,
+          "Couldn't build proto file into descriptor pool: "
+          'duplicate extension entry',
+      ):
+        pool.Add(f)
+    else:
+      # TODO: b/381131694 - Ensure conformance between upb/c++/python.
+      # C++ and pure Python implementations should raise an error when adding a
+      # duplicate extension number. There doesn't seem to be a benefit to failing
+      # only when GetMessageClassesForFiles is called.
+      pool.Add(f)
 
-    self.assertIn(str(cm.exception),
-                  ['Extensions '
-                   '"google.protobuf.python.internal.Duplicate.extension_field" and'
-                   ' "google.protobuf.python.internal.Extension.extension_field"'
-                   ' both try to extend message type'
-                   ' "google.protobuf.python.internal.Container"'
-                   ' with field number 2.',
-                   'Double registration of Extensions'])
+      with self.assertRaises(Exception) as cm:
+        message_factory.GetMessageClassesForFiles([f.name], pool)
+
+      self.assertIn(
+          str(cm.exception),
+          [
+              (
+                  'Extensions'
+                  ' "google.protobuf.python.internal.Duplicate.extension_field"'
+                  ' and'
+                  ' "google.protobuf.python.internal.Extension.extension_field"'
+                  ' both try to extend message type'
+                  ' "google.protobuf.python.internal.Container" with field'
+                  ' number 2.'
+              ),
+              'Double registration of Extensions',
+          ],
+      )
 
   def testExtensionValueInDifferentFile(self):
     # Add Container message.

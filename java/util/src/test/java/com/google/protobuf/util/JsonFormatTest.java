@@ -9,7 +9,9 @@ package com.google.protobuf.util;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
+import static org.junit.Assert.assertThrows;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.gson.JsonSyntaxException;
 import com.google.protobuf.Any;
@@ -19,6 +21,7 @@ import com.google.protobuf.BytesValue;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.DoubleValue;
+import com.google.protobuf.ExtensionRegistry;
 import com.google.protobuf.FloatValue;
 import com.google.protobuf.Int32Value;
 import com.google.protobuf.Int64Value;
@@ -46,6 +49,8 @@ import com.google.protobuf.util.proto.JsonTestProto.TestRecursive;
 import com.google.protobuf.util.proto.JsonTestProto.TestStruct;
 import com.google.protobuf.util.proto.JsonTestProto.TestTimestamp;
 import com.google.protobuf.util.proto.JsonTestProto.TestWrappers;
+import com.google.protobuf.util.proto.JsonTestProto2;
+import com.google.protobuf.util.proto.JsonTestProto2.TestAllTypesProto2;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -83,8 +88,8 @@ public class JsonFormatTest {
   private void setAllFields(TestAllTypes.Builder builder) {
     builder.setOptionalInt32(1234);
     builder.setOptionalInt64(1234567890123456789L);
-    builder.setOptionalUint32(5678);
-    builder.setOptionalUint64(2345678901234567890L);
+    builder.setOptionalUint32(-1);
+    builder.setOptionalUint64(-1L);
     builder.setOptionalSint32(9012);
     builder.setOptionalSint64(3456789012345678901L);
     builder.setOptionalFixed32(3456);
@@ -141,8 +146,15 @@ public class JsonFormatTest {
   }
 
   private void assertRoundTripEquals(Message message, TypeRegistry registry) throws Exception {
+    assertRoundTripEquals(message, registry, ExtensionRegistry.getEmptyRegistry());
+  }
+
+  private void assertRoundTripEquals(
+      Message message, TypeRegistry registry, ExtensionRegistry extensionRegistry)
+      throws Exception {
     JsonFormat.Printer printer = JsonFormat.printer().usingTypeRegistry(registry);
-    JsonFormat.Parser parser = JsonFormat.parser().usingTypeRegistry(registry);
+    JsonFormat.Parser parser =
+        JsonFormat.parser().usingTypeRegistry(registry).usingExtensionRegistry(extensionRegistry);
     Message.Builder builder = message.newBuilderForType();
     parser.merge(printer.print(message), builder);
     Message parsedMessage = builder.build();
@@ -178,19 +190,280 @@ public class JsonFormatTest {
     JsonFormat.parser().ignoringUnknownFields().merge(json, builder);
   }
 
+  private ExtensionRegistry makeExtensionRegistry() {
+    ExtensionRegistry extensionRegistry = ExtensionRegistry.newInstance();
+    JsonTestProto2.registerAllExtensions(extensionRegistry);
+    return extensionRegistry;
+  }
+
+  @Test
+  public void
+      testExtensionFields_printingFullyQualifiedExtensionNames_arePrintedWithFullyQualifiedName()
+          throws Exception {
+    TypeRegistry registry =
+        TypeRegistry.newBuilder().add(TestAllTypesProto2.getDescriptor()).build();
+    JsonFormat.Printer printer =
+        JsonFormat.printer().usingTypeRegistry(registry).printingFullyQualifiedExtensionNames();
+    TestAllTypesProto2 message =
+        TestAllTypesProto2.newBuilder()
+            .setExtension(JsonTestProto2.extensionInt32, 123)
+            .setExtension(
+                JsonTestProto2.extensionRepeatedBool, ImmutableList.of(true, false, false))
+            .setExtension(
+                JsonTestProto2.extensionNestedMessage,
+                TestAllTypesProto2.NestedMessage.newBuilder().setValue(789).build())
+            .build();
+
+    String json = printer.print(message);
+
+    String expectedJsonWithFullnames =
+        "{\n"
+            + "  \"[json_test_proto2.extension_int32]\": 123,\n"
+            + "  \"[json_test_proto2.extension_repeated_bool]\": [true, false, false],\n"
+            + "  \"[json_test_proto2.extension_nested_message]\": {\n"
+            + "    \"value\": 789\n"
+            + "  }\n"
+            + "}";
+    assertThat(json).isEqualTo(expectedJsonWithFullnames);
+    // Assert round-trip success.
+    JsonFormat.Parser parser =
+        JsonFormat.parser()
+            .usingTypeRegistry(registry)
+            .usingExtensionRegistry(makeExtensionRegistry());
+    Message.Builder builder = message.newBuilderForType();
+    parser.merge(json, builder);
+    Message parsedMessage = builder.build();
+    assertThat(parsedMessage.toString()).isEqualTo(message.toString());
+  }
+
+  @Test
+  public void
+      testExtensionFields_printingFullyQualifiedExtensionNames_withSameShortName_doesNotDuplicateKeys()
+          throws Exception {
+    TypeRegistry registry =
+        TypeRegistry.newBuilder().add(TestAllTypesProto2.getDescriptor()).build();
+    JsonFormat.Printer printer =
+        JsonFormat.printer().usingTypeRegistry(registry).printingFullyQualifiedExtensionNames();
+    TestAllTypesProto2 message =
+        TestAllTypesProto2.newBuilder()
+            .setExtensionSameName("Field entry")
+            .setExtension(JsonTestProto2.extensionSameName, "Extension entry")
+            .build();
+
+    String json = printer.print(message);
+    String expectedJsonWithFullnames =
+        "{\n"
+            + "  \"extensionSameName\": \"Field entry\",\n"
+            + "  \"[json_test_proto2.extension_same_name]\": \"Extension entry\"\n"
+            + "}";
+    assertThat(json).isEqualTo(expectedJsonWithFullnames);
+    // Assert round-trip success.
+    JsonFormat.Parser parser =
+        JsonFormat.parser()
+            .usingTypeRegistry(registry)
+            .usingExtensionRegistry(makeExtensionRegistry());
+    Message.Builder builder = message.newBuilderForType();
+    parser.merge(json, builder);
+    Message parsedMessage = builder.build();
+    assertThat(parsedMessage.toString()).isEqualTo(message.toString());
+  }
+
+  /**
+   * This test demonstrates the currently known bad behavior of printing extension fields.
+   *
+   * <p>The JSON serialization of the proto contains short names for extension fields. Trying to
+   * parse this JSON will fail because the parser does not recognize the extensions.
+   */
+  @Test
+  public void
+      testExtensionFields_printingDeprecatedNonConformantShortExtensionNames_arePrintedWithShortName()
+          throws Exception {
+    TypeRegistry registry =
+        TypeRegistry.newBuilder().add(TestAllTypesProto2.getDescriptor()).build();
+    JsonFormat.Printer printer =
+        JsonFormat.printer()
+            .usingTypeRegistry(registry)
+            .printingDeprecatedNonConformantShortExtensionNames();
+    TestAllTypesProto2 message =
+        TestAllTypesProto2.newBuilder()
+            .setExtension(JsonTestProto2.extensionInt32, 123)
+            .setExtension(
+                JsonTestProto2.extensionRepeatedBool, ImmutableList.of(true, false, false))
+            .setExtension(
+                JsonTestProto2.extensionNestedMessage,
+                TestAllTypesProto2.NestedMessage.newBuilder().setValue(789).build())
+            .build();
+
+    String json = printer.print(message);
+
+    String expectedJsonWithShortNames =
+        "{\n"
+            + "  \"extensionInt32\": 123,\n"
+            + "  \"extensionRepeatedBool\": [true, false, false],\n"
+            + "  \"extensionNestedMessage\": {\n"
+            + "    \"value\": 789\n"
+            + "  }\n"
+            + "}";
+    assertThat(json).isEqualTo(expectedJsonWithShortNames);
+    // Short names prevent round-trip success, it requires fully qualified extension names.
+    JsonFormat.Parser parser =
+        JsonFormat.parser()
+            .usingTypeRegistry(registry)
+            .usingExtensionRegistry(makeExtensionRegistry());
+    TestAllTypesProto2.Builder builder = TestAllTypesProto2.newBuilder();
+    Exception e =
+        assertThrows(InvalidProtocolBufferException.class, () -> parser.merge(json, builder));
+    assertThat(e)
+        .hasMessageThat()
+        .contains(
+            "Cannot find field: extensionInt32 in message json_test_proto2.TestAllTypesProto2");
+  }
+
+  /**
+   * This test demonstrates the currently known bad behavior of printing extension fields when the
+   * name of the extension is the same as the name of a regular field.
+   *
+   * <p>The JSON serialization of the proto contains a duplicate key. Trying to parse this JSON will
+   * result possibly the wrong value being assigned to the regular field and the extension field to
+   * be dropped.
+   */
+  @Test
+  public void
+      testExtensionFields_printingDeprecatedNonConformantShortExtensionNames_withSameShortName_printsDuplicateJsonKeys()
+          throws Exception {
+    com.google.protobuf.TypeRegistry registry =
+        com.google.protobuf.TypeRegistry.newBuilder()
+            .add(TestAllTypesProto2.getDescriptor())
+            .build();
+    JsonFormat.Printer printer =
+        JsonFormat.printer()
+            .usingTypeRegistry(registry)
+            .printingDeprecatedNonConformantShortExtensionNames();
+    JsonFormat.Parser parser = JsonFormat.parser().usingTypeRegistry(registry);
+    TestAllTypesProto2 message =
+        TestAllTypesProto2.newBuilder()
+            .setExtensionSameName("Field entry")
+            .setExtension(JsonTestProto2.extensionSameName, "Extension entry")
+            .build();
+
+    String json = printer.print(message);
+    Message.Builder builder = message.newBuilderForType();
+    parser.merge(json, builder);
+    Message parsedMessage = builder.build();
+
+    String expectedJsonWithDuplicateKeys =
+        "{\n"
+            + "  \"extensionSameName\": \"Field entry\",\n"
+            + "  \"extensionSameName\": \"Extension entry\"\n"
+            + "}";
+    assertThat(json).isEqualTo(expectedJsonWithDuplicateKeys);
+    // Short names prevent round-trip success, collision occurs due to duplicate json keys.
+    assertThat(parsedMessage.toString()).isNotEqualTo(message.toString());
+  }
+
+  /**
+   * This test demonstrates a parsing limitation for JSON that include extension fields with their
+   * short names.
+   *
+   * <p>Previously this library printed extensions with their short name instead of their fully
+   * qualified name. If an older version of this library was used to generate JSON, it still cannot
+   * be parsed.
+   */
+  @Test
+  public void testParse_whenJsonHasExtensionWithShortNames_cannotParseJson() throws Exception {
+    TypeRegistry typeRegistry =
+        TypeRegistry.newBuilder().add(TestAllTypesProto2.getDescriptor()).build();
+    String json =
+        "{\n"
+            + "  \"extensionInt32\": 123,\n"
+            + "  \"extensionRepeatedBool\": [true, false, false],\n"
+            + "  \"extensionNestedMessage\": {\n"
+            + "    \"value\": 789\n"
+            + "  }\n"
+            + "}";
+    TestAllTypesProto2.Builder builder = TestAllTypesProto2.newBuilder();
+    try {
+      JsonFormat.parser()
+          .usingTypeRegistry(typeRegistry)
+          .usingExtensionRegistry(makeExtensionRegistry())
+          .merge(json, builder);
+      assertWithMessage("Exception is expected.").fail();
+    } catch (InvalidProtocolBufferException expected) {
+      assertThat(expected).hasMessageThat().contains("Cannot find field: extensionInt32");
+    }
+  }
+
   @Test
   public void testAllFields() throws Exception {
     TestAllTypes.Builder builder = TestAllTypes.newBuilder();
     setAllFields(builder);
     TestAllTypes message = builder.build();
 
-    assertThat(toJsonString(message))
+    JsonFormat.Printer printer =
+        JsonFormat.printer().printingDeprecatedNonConformantShortExtensionNames();
+    String json = printer.print(message);
+    assertThat(json)
         .isEqualTo(
             "{\n"
                 + "  \"optionalInt32\": 1234,\n"
                 + "  \"optionalInt64\": \"1234567890123456789\",\n"
-                + "  \"optionalUint32\": 5678,\n"
-                + "  \"optionalUint64\": \"2345678901234567890\",\n"
+                + "  \"optionalUint32\": 4294967295,\n"
+                + "  \"optionalUint64\": \"18446744073709551615\",\n"
+                + "  \"optionalSint32\": 9012,\n"
+                + "  \"optionalSint64\": \"3456789012345678901\",\n"
+                + "  \"optionalFixed32\": 3456,\n"
+                + "  \"optionalFixed64\": \"4567890123456789012\",\n"
+                + "  \"optionalSfixed32\": 7890,\n"
+                + "  \"optionalSfixed64\": \"5678901234567890123\",\n"
+                + "  \"optionalFloat\": 1.5,\n"
+                + "  \"optionalDouble\": 1.25,\n"
+                + "  \"optionalBool\": true,\n"
+                + "  \"optionalString\": \"Hello world!\",\n"
+                + "  \"optionalBytes\": \"AAEC\",\n"
+                + "  \"optionalNestedMessage\": {\n"
+                + "    \"value\": 100\n"
+                + "  },\n"
+                + "  \"optionalNestedEnum\": \"BAR\",\n"
+                + "  \"repeatedInt32\": [1234, 234],\n"
+                + "  \"repeatedInt64\": [\"1234567890123456789\", \"234567890123456789\"],\n"
+                + "  \"repeatedUint32\": [5678, 678],\n"
+                + "  \"repeatedUint64\": [\"2345678901234567890\", \"345678901234567890\"],\n"
+                + "  \"repeatedSint32\": [9012, 10],\n"
+                + "  \"repeatedSint64\": [\"3456789012345678901\", \"456789012345678901\"],\n"
+                + "  \"repeatedFixed32\": [3456, 456],\n"
+                + "  \"repeatedFixed64\": [\"4567890123456789012\", \"567890123456789012\"],\n"
+                + "  \"repeatedSfixed32\": [7890, 890],\n"
+                + "  \"repeatedSfixed64\": [\"5678901234567890123\", \"678901234567890123\"],\n"
+                + "  \"repeatedFloat\": [1.5, 11.5],\n"
+                + "  \"repeatedDouble\": [1.25, 11.25],\n"
+                + "  \"repeatedBool\": [true, true],\n"
+                + "  \"repeatedString\": [\"Hello world!\", \"ello world!\"],\n"
+                + "  \"repeatedBytes\": [\"AAEC\", \"AQI=\"],\n"
+                + "  \"repeatedNestedMessage\": [{\n"
+                + "    \"value\": 100\n"
+                + "  }, {\n"
+                + "    \"value\": 200\n"
+                + "  }],\n"
+                + "  \"repeatedNestedEnum\": [\"BAR\", \"BAZ\"]\n"
+                + "}");
+
+    assertRoundTripEquals(message);
+  }
+
+  @Test
+  public void testAllFields_withFullyQualifiedExtensionNamesFlag() throws Exception {
+    TestAllTypes.Builder builder = TestAllTypes.newBuilder();
+    setAllFields(builder);
+    TestAllTypes message = builder.build();
+    JsonFormat.Printer printer = JsonFormat.printer().printingFullyQualifiedExtensionNames();
+    String json = printer.print(message);
+    assertThat(json)
+        .isEqualTo(
+            "{\n"
+                + "  \"optionalInt32\": 1234,\n"
+                + "  \"optionalInt64\": \"1234567890123456789\",\n"
+                + "  \"optionalUint32\": 4294967295,\n"
+                + "  \"optionalUint64\": \"18446744073709551615\",\n"
                 + "  \"optionalSint32\": 9012,\n"
                 + "  \"optionalSint64\": \"3456789012345678901\",\n"
                 + "  \"optionalFixed32\": 3456,\n"
@@ -390,7 +663,6 @@ public class JsonFormatTest {
       assertWithMessage("Exception is expected.").fail();
     } catch (InvalidProtocolBufferException expected) {
       assertThat(expected).hasMessageThat().isEqualTo("Not an uint32 value: 1.5");
-      assertThat(expected).hasCauseThat().isNotNull();
     }
   }
 
@@ -402,7 +674,50 @@ public class JsonFormatTest {
       assertWithMessage("Exception is expected.").fail();
     } catch (InvalidProtocolBufferException expected) {
       assertThat(expected).hasMessageThat().isEqualTo("Not an uint64 value: 1.5");
-      assertThat(expected).hasCauseThat().isNotNull();
+    }
+  }
+
+  @Test
+  public void testRejectLargeQuotedExponentInt32() throws IOException {
+    TestAllTypes.Builder builder = TestAllTypes.newBuilder();
+    try {
+      mergeFromJson("{\"optionalInt32\": \"1e536870000\"}", builder);
+      assertWithMessage("Exception is expected.").fail();
+    } catch (InvalidProtocolBufferException expected) {
+      assertThat(expected).hasMessageThat().isEqualTo("Not an int32 value: \"1e536870000\"");
+    }
+  }
+
+  @Test
+  public void testRejectLargeQuotedExponentUnsignedUint32() throws IOException {
+    TestAllTypes.Builder builder = TestAllTypes.newBuilder();
+    try {
+      mergeFromJson("{\"optionalUint32\": \"1e536870000\"}", builder);
+      assertWithMessage("Exception is expected.").fail();
+    } catch (InvalidProtocolBufferException expected) {
+      assertThat(expected).hasMessageThat().isEqualTo("Out of range uint32 value: \"1e536870000\"");
+    }
+  }
+
+  @Test
+  public void testRejectLargeQuotedExponentInt64() throws IOException {
+    TestAllTypes.Builder builder = TestAllTypes.newBuilder();
+    try {
+      mergeFromJson("{\"optionalInt64\": \"1e536870000\"}", builder);
+      assertWithMessage("Exception is expected.").fail();
+    } catch (InvalidProtocolBufferException expected) {
+      assertThat(expected).hasMessageThat().isEqualTo("Not an int64 value: \"1e536870000\"");
+    }
+  }
+
+  @Test
+  public void testRejectLargeQuotedExponentUnsignedUint64() throws IOException {
+    TestAllTypes.Builder builder = TestAllTypes.newBuilder();
+    try {
+      mergeFromJson("{\"optionalUint64\": \"1e536870000\"}", builder);
+      assertWithMessage("Exception is expected.").fail();
+    } catch (InvalidProtocolBufferException expected) {
+      assertThat(expected).hasMessageThat().isEqualTo("Out of range uint64 value: \"1e536870000\"");
     }
   }
 
@@ -898,7 +1213,9 @@ public class JsonFormatTest {
     final String incorrectTimestampString = "{\"seconds\":1800,\"nanos\":0}";
     try {
       TestTimestamp.Builder builder = TestTimestamp.newBuilder();
-      mergeFromJson(String.format("{\"timestamp_value\": %s}", incorrectTimestampString), builder);
+      mergeFromJson(
+          String.format(Locale.ROOT, "{\"timestamp_value\": %s}", incorrectTimestampString),
+          builder);
       assertWithMessage("expected exception").fail();
     } catch (InvalidProtocolBufferException e) {
       // Exception expected.
@@ -923,7 +1240,8 @@ public class JsonFormatTest {
     final String incorrectDurationString = "{\"seconds\":10,\"nanos\":500}";
     try {
       TestDuration.Builder builder = TestDuration.newBuilder();
-      mergeFromJson(String.format("{\"duration_value\": %s}", incorrectDurationString), builder);
+      mergeFromJson(
+          String.format(Locale.ROOT, "{\"duration_value\": %s}", incorrectDurationString), builder);
       assertWithMessage("expected exception").fail();
     } catch (InvalidProtocolBufferException e) {
       // Exception expected.
@@ -943,6 +1261,18 @@ public class JsonFormatTest {
 
     assertThat(toJsonString(message))
         .isEqualTo("{\n" + "  \"fieldMaskValue\": \"foo.bar,baz,fooBar.baz\"\n" + "}");
+    assertRoundTripEquals(message);
+  }
+
+  @Test
+  public void testFieldMaskWithQuote() throws Exception {
+    TestFieldMask message =
+        TestFieldMask.newBuilder()
+            .setFieldMaskValue(FieldMaskUtil.fromString("foo.bar,baz,foo_bar.baz,\""))
+            .build();
+
+    assertThat(toJsonString(message))
+        .isEqualTo("{\n" + "  \"fieldMaskValue\": \"foo.bar,baz,fooBar.baz,\\\"\"\n" + "}");
     assertRoundTripEquals(message);
   }
 
@@ -1228,6 +1558,106 @@ public class JsonFormatTest {
   }
 
   @Test
+  public void testAnyFieldsWithExtensions_usingExtensionRegistry_canPrintExtensions()
+      throws Exception {
+    TestAllTypesProto2.Builder builder = TestAllTypesProto2.newBuilder();
+    builder.setExtension(JsonTestProto2.extensionInt32, 123);
+    builder.setExtension(
+        JsonTestProto2.extensionRepeatedBool, ImmutableList.of(true, false, false));
+    builder.setExtension(
+        JsonTestProto2.extensionNestedMessage,
+        TestAllTypesProto2.NestedMessage.newBuilder().setValue(789).build());
+    builder.setExtension(JsonTestProto2.extensionSameName, "Extension entry");
+    builder.setExtensionSameName("Field entry");
+    TestAllTypesProto2 message = builder.build();
+    TestAny anyMessage = TestAny.newBuilder().setAnyValue(Any.pack(message)).build();
+    TypeRegistry registry =
+        TypeRegistry.newBuilder().add(TestAllTypesProto2.getDescriptor()).build();
+    ExtensionRegistry extensionRegistry = makeExtensionRegistry();
+    JsonFormat.Printer printer =
+        JsonFormat.printer()
+            .usingTypeRegistry(registry)
+            .usingExtensionRegistry(extensionRegistry)
+            .printingFullyQualifiedExtensionNames();
+
+    String json = printer.print(anyMessage);
+
+    // Verify JSON content
+    assertThat(json)
+        .isEqualTo(
+            "{\n"
+                + "  \"anyValue\": {\n"
+                + "    \"@type\": \"type.googleapis.com/json_test_proto2.TestAllTypesProto2\",\n"
+                + "    \"extensionSameName\": \"Field entry\",\n"
+                + "    \"[json_test_proto2.extension_int32]\": 123,\n"
+                + "    \"[json_test_proto2.extension_repeated_bool]\": [true, false, false],\n"
+                + "    \"[json_test_proto2.extension_nested_message]\": {\n"
+                + "      \"value\": 789\n"
+                + "    },\n"
+                + "    \"[json_test_proto2.extension_same_name]\": \"Extension entry\"\n"
+                + "  }\n"
+                + "}");
+
+    // Assert round trip.
+    JsonFormat.Parser parser =
+        JsonFormat.parser().usingTypeRegistry(registry).usingExtensionRegistry(extensionRegistry);
+    TestAny.Builder anyBuilder = TestAny.newBuilder();
+    parser.merge(json, anyBuilder);
+    Any parsedAny = anyBuilder.getAnyValue();
+    assertThat(anyBuilder.build()).isEqualTo(anyMessage);
+    TestAllTypesProto2 unpacked =
+        TestAllTypesProto2.parseFrom(parsedAny.getValue(), extensionRegistry);
+    assertThat(unpacked).isEqualTo(message);
+  }
+
+  @Test
+  public void testAnyFieldsWithExtensions_usingEmptyExtensionRegistry_cannotPrintExtensions()
+      throws Exception {
+    TestAllTypesProto2.Builder builder = TestAllTypesProto2.newBuilder();
+    builder.setExtension(JsonTestProto2.extensionInt32, 123);
+    builder.setExtension(
+        JsonTestProto2.extensionRepeatedBool, ImmutableList.of(true, false, false));
+    builder.setExtension(
+        JsonTestProto2.extensionNestedMessage,
+        TestAllTypesProto2.NestedMessage.newBuilder().setValue(789).build());
+    builder.setExtension(JsonTestProto2.extensionSameName, "Extension entry");
+    builder.setExtensionSameName("Field entry");
+    TestAllTypesProto2 message = builder.build();
+    TestAny anyMessage = TestAny.newBuilder().setAnyValue(Any.pack(message)).build();
+    TypeRegistry registry =
+        TypeRegistry.newBuilder().add(TestAllTypesProto2.getDescriptor()).build();
+    ExtensionRegistry extensionRegistry = ExtensionRegistry.getEmptyRegistry();
+    JsonFormat.Printer printer =
+        JsonFormat.printer()
+            .usingTypeRegistry(registry)
+            .usingExtensionRegistry(extensionRegistry)
+            .printingFullyQualifiedExtensionNames();
+
+    String json = printer.print(anyMessage);
+
+    // Verify JSON content doesn't contain extensions.
+    assertThat(json)
+        .isEqualTo(
+            "{\n"
+                + "  \"anyValue\": {\n"
+                + "    \"@type\": \"type.googleapis.com/json_test_proto2.TestAllTypesProto2\",\n"
+                + "    \"extensionSameName\": \"Field entry\"\n"
+                + "  }\n"
+                + "}");
+
+    // Assert round trip fails due to missing extensions.
+    JsonFormat.Parser parser =
+        JsonFormat.parser().usingTypeRegistry(registry).usingExtensionRegistry(extensionRegistry);
+    TestAny.Builder anyBuilder = TestAny.newBuilder();
+    parser.merge(json, anyBuilder);
+    Any parsedAny = anyBuilder.getAnyValue();
+    assertThat(anyBuilder.build()).isNotEqualTo(anyMessage);
+    TestAllTypesProto2 unpacked =
+        TestAllTypesProto2.parseFrom(parsedAny.getValue(), extensionRegistry);
+    assertThat(unpacked).isNotEqualTo(message);
+  }
+
+  @Test
   public void testAnyInMaps() throws Exception {
     JsonFormat.TypeRegistry registry =
         JsonFormat.TypeRegistry.newBuilder().add(TestAllTypes.getDescriptor()).build();
@@ -1483,50 +1913,59 @@ public class JsonFormatTest {
   }
 
   @Test
-  public void testIncludingDefaultValueFields() throws Exception {
+  public void testDefaultValueOptionsProto3() throws Exception {
     TestAllTypes message = TestAllTypes.getDefaultInstance();
     assertThat(JsonFormat.printer().print(message)).isEqualTo("{\n}");
-    assertThat(JsonFormat.printer().includingDefaultValueFields().print(message))
-        .isEqualTo(
-            "{\n"
-                + "  \"optionalInt32\": 0,\n"
-                + "  \"optionalInt64\": \"0\",\n"
-                + "  \"optionalUint32\": 0,\n"
-                + "  \"optionalUint64\": \"0\",\n"
-                + "  \"optionalSint32\": 0,\n"
-                + "  \"optionalSint64\": \"0\",\n"
-                + "  \"optionalFixed32\": 0,\n"
-                + "  \"optionalFixed64\": \"0\",\n"
-                + "  \"optionalSfixed32\": 0,\n"
-                + "  \"optionalSfixed64\": \"0\",\n"
-                + "  \"optionalFloat\": 0.0,\n"
-                + "  \"optionalDouble\": 0.0,\n"
-                + "  \"optionalBool\": false,\n"
-                + "  \"optionalString\": \"\",\n"
-                + "  \"optionalBytes\": \"\",\n"
-                + "  \"optionalNestedEnum\": \"FOO\",\n"
-                + "  \"repeatedInt32\": [],\n"
-                + "  \"repeatedInt64\": [],\n"
-                + "  \"repeatedUint32\": [],\n"
-                + "  \"repeatedUint64\": [],\n"
-                + "  \"repeatedSint32\": [],\n"
-                + "  \"repeatedSint64\": [],\n"
-                + "  \"repeatedFixed32\": [],\n"
-                + "  \"repeatedFixed64\": [],\n"
-                + "  \"repeatedSfixed32\": [],\n"
-                + "  \"repeatedSfixed64\": [],\n"
-                + "  \"repeatedFloat\": [],\n"
-                + "  \"repeatedDouble\": [],\n"
-                + "  \"repeatedBool\": [],\n"
-                + "  \"repeatedString\": [],\n"
-                + "  \"repeatedBytes\": [],\n"
-                + "  \"repeatedNestedMessage\": [],\n"
-                + "  \"repeatedNestedEnum\": [],\n"
-                + "  \"optionalAliasedEnum\": \"ALIAS_FOO\"\n"
-                + "}");
+
+    String expectedJsonWithDefaults =
+        "{\n"
+            + "  \"optionalInt32\": 0,\n"
+            + "  \"optionalInt64\": \"0\",\n"
+            + "  \"optionalUint32\": 0,\n"
+            + "  \"optionalUint64\": \"0\",\n"
+            + "  \"optionalSint32\": 0,\n"
+            + "  \"optionalSint64\": \"0\",\n"
+            + "  \"optionalFixed32\": 0,\n"
+            + "  \"optionalFixed64\": \"0\",\n"
+            + "  \"optionalSfixed32\": 0,\n"
+            + "  \"optionalSfixed64\": \"0\",\n"
+            + "  \"optionalFloat\": 0.0,\n"
+            + "  \"optionalDouble\": 0.0,\n"
+            + "  \"optionalBool\": false,\n"
+            + "  \"optionalString\": \"\",\n"
+            + "  \"optionalBytes\": \"\",\n"
+            + "  \"optionalNestedEnum\": \"FOO\",\n"
+            + "  \"repeatedInt32\": [],\n"
+            + "  \"repeatedInt64\": [],\n"
+            + "  \"repeatedUint32\": [],\n"
+            + "  \"repeatedUint64\": [],\n"
+            + "  \"repeatedSint32\": [],\n"
+            + "  \"repeatedSint64\": [],\n"
+            + "  \"repeatedFixed32\": [],\n"
+            + "  \"repeatedFixed64\": [],\n"
+            + "  \"repeatedSfixed32\": [],\n"
+            + "  \"repeatedSfixed64\": [],\n"
+            + "  \"repeatedFloat\": [],\n"
+            + "  \"repeatedDouble\": [],\n"
+            + "  \"repeatedBool\": [],\n"
+            + "  \"repeatedString\": [],\n"
+            + "  \"repeatedBytes\": [],\n"
+            + "  \"repeatedNestedMessage\": [],\n"
+            + "  \"repeatedNestedEnum\": [],\n"
+            + "  \"optionalAliasedEnum\": \"ALIAS_FOO\",\n"
+            + "  \"repeatedRecursive\": []\n"
+            + "}";
+
+    assertThat(JsonFormat.printer().alwaysPrintFieldsWithNoPresence().print(message))
+        .isEqualTo(expectedJsonWithDefaults);
+  }
+
+  @Test
+  public void testDefaultValueForSpecificFieldsOptionProto2() throws Exception {
+    TestAllTypesProto2 message = TestAllTypesProto2.getDefaultInstance();
 
     Set<FieldDescriptor> fixedFields = new HashSet<>();
-    for (FieldDescriptor fieldDesc : TestAllTypes.getDescriptor().getFields()) {
+    for (FieldDescriptor fieldDesc : TestAllTypesProto2.getDescriptor().getFields()) {
       if (fieldDesc.getName().contains("_fixed")) {
         fixedFields.add(fieldDesc);
       }
@@ -1541,7 +1980,7 @@ public class JsonFormatTest {
                 + "  \"repeatedFixed64\": []\n"
                 + "}");
 
-    TestAllTypes messageNonDefaults =
+    TestAllTypesProto2 messageNonDefaults =
         message.toBuilder().setOptionalInt64(1234).setOptionalFixed32(3232).build();
     assertThat(
             JsonFormat.printer().includingDefaultValueFields(fixedFields).print(messageNonDefaults))
@@ -1553,168 +1992,6 @@ public class JsonFormatTest {
                 + "  \"repeatedFixed32\": [],\n"
                 + "  \"repeatedFixed64\": []\n"
                 + "}");
-
-    try {
-      JsonFormat.printer().includingDefaultValueFields().includingDefaultValueFields();
-      assertWithMessage("IllegalStateException is expected.").fail();
-    } catch (IllegalStateException e) {
-      // Expected.
-      assertWithMessage("Exception message should mention includingDefaultValueFields.")
-          .that(e.getMessage().contains("includingDefaultValueFields"))
-          .isTrue();
-    }
-
-    try {
-      JsonFormat.printer().includingDefaultValueFields().includingDefaultValueFields(fixedFields);
-      assertWithMessage("IllegalStateException is expected.").fail();
-    } catch (IllegalStateException e) {
-      // Expected.
-      assertWithMessage("Exception message should mention includingDefaultValueFields.")
-          .that(e.getMessage().contains("includingDefaultValueFields"))
-          .isTrue();
-    }
-
-    try {
-      JsonFormat.printer().includingDefaultValueFields(fixedFields).includingDefaultValueFields();
-      assertWithMessage("IllegalStateException is expected.").fail();
-    } catch (IllegalStateException e) {
-      // Expected.
-      assertWithMessage("Exception message should mention includingDefaultValueFields.")
-          .that(e.getMessage().contains("includingDefaultValueFields"))
-          .isTrue();
-    }
-
-    try {
-      JsonFormat.printer()
-          .includingDefaultValueFields(fixedFields)
-          .includingDefaultValueFields(fixedFields);
-      assertWithMessage("IllegalStateException is expected.").fail();
-    } catch (IllegalStateException e) {
-      // Expected.
-      assertWithMessage("Exception message should mention includingDefaultValueFields.")
-          .that(e.getMessage().contains("includingDefaultValueFields"))
-          .isTrue();
-    }
-
-    Set<FieldDescriptor> intFields = new HashSet<>();
-    for (FieldDescriptor fieldDesc : TestAllTypes.getDescriptor().getFields()) {
-      if (fieldDesc.getName().contains("_int")) {
-        intFields.add(fieldDesc);
-      }
-    }
-
-    try {
-      JsonFormat.printer()
-          .includingDefaultValueFields(intFields)
-          .includingDefaultValueFields(fixedFields);
-      assertWithMessage("IllegalStateException is expected.").fail();
-    } catch (IllegalStateException e) {
-      // Expected.
-      assertWithMessage("Exception message should mention includingDefaultValueFields.")
-          .that(e.getMessage().contains("includingDefaultValueFields"))
-          .isTrue();
-    }
-
-    try {
-      JsonFormat.printer().includingDefaultValueFields(null);
-      assertWithMessage("IllegalArgumentException is expected.").fail();
-    } catch (IllegalArgumentException e) {
-      // Expected.
-      assertWithMessage("Exception message should mention includingDefaultValueFields.")
-          .that(e.getMessage().contains("includingDefaultValueFields"))
-          .isTrue();
-    }
-
-    try {
-      JsonFormat.printer().includingDefaultValueFields(Collections.<FieldDescriptor>emptySet());
-      assertWithMessage("IllegalArgumentException is expected.").fail();
-    } catch (IllegalArgumentException e) {
-      // Expected.
-      assertWithMessage("Exception message should mention includingDefaultValueFields.")
-          .that(e.getMessage().contains("includingDefaultValueFields"))
-          .isTrue();
-    }
-
-    TestMap mapMessage = TestMap.getDefaultInstance();
-    assertThat(JsonFormat.printer().print(mapMessage)).isEqualTo("{\n}");
-    assertThat(JsonFormat.printer().includingDefaultValueFields().print(mapMessage))
-        .isEqualTo(
-            "{\n"
-                + "  \"int32ToInt32Map\": {\n"
-                + "  },\n"
-                + "  \"int64ToInt32Map\": {\n"
-                + "  },\n"
-                + "  \"uint32ToInt32Map\": {\n"
-                + "  },\n"
-                + "  \"uint64ToInt32Map\": {\n"
-                + "  },\n"
-                + "  \"sint32ToInt32Map\": {\n"
-                + "  },\n"
-                + "  \"sint64ToInt32Map\": {\n"
-                + "  },\n"
-                + "  \"fixed32ToInt32Map\": {\n"
-                + "  },\n"
-                + "  \"fixed64ToInt32Map\": {\n"
-                + "  },\n"
-                + "  \"sfixed32ToInt32Map\": {\n"
-                + "  },\n"
-                + "  \"sfixed64ToInt32Map\": {\n"
-                + "  },\n"
-                + "  \"boolToInt32Map\": {\n"
-                + "  },\n"
-                + "  \"stringToInt32Map\": {\n"
-                + "  },\n"
-                + "  \"int32ToInt64Map\": {\n"
-                + "  },\n"
-                + "  \"int32ToUint32Map\": {\n"
-                + "  },\n"
-                + "  \"int32ToUint64Map\": {\n"
-                + "  },\n"
-                + "  \"int32ToSint32Map\": {\n"
-                + "  },\n"
-                + "  \"int32ToSint64Map\": {\n"
-                + "  },\n"
-                + "  \"int32ToFixed32Map\": {\n"
-                + "  },\n"
-                + "  \"int32ToFixed64Map\": {\n"
-                + "  },\n"
-                + "  \"int32ToSfixed32Map\": {\n"
-                + "  },\n"
-                + "  \"int32ToSfixed64Map\": {\n"
-                + "  },\n"
-                + "  \"int32ToFloatMap\": {\n"
-                + "  },\n"
-                + "  \"int32ToDoubleMap\": {\n"
-                + "  },\n"
-                + "  \"int32ToBoolMap\": {\n"
-                + "  },\n"
-                + "  \"int32ToStringMap\": {\n"
-                + "  },\n"
-                + "  \"int32ToBytesMap\": {\n"
-                + "  },\n"
-                + "  \"int32ToMessageMap\": {\n"
-                + "  },\n"
-                + "  \"int32ToEnumMap\": {\n"
-                + "  }\n"
-                + "}");
-
-    TestOneof oneofMessage = TestOneof.getDefaultInstance();
-    assertThat(JsonFormat.printer().print(oneofMessage)).isEqualTo("{\n}");
-    assertThat(JsonFormat.printer().includingDefaultValueFields().print(oneofMessage))
-        .isEqualTo("{\n}");
-
-    oneofMessage = TestOneof.newBuilder().setOneofInt32(42).build();
-    assertThat(JsonFormat.printer().print(oneofMessage)).isEqualTo("{\n  \"oneofInt32\": 42\n}");
-    assertThat(JsonFormat.printer().includingDefaultValueFields().print(oneofMessage))
-        .isEqualTo("{\n  \"oneofInt32\": 42\n}");
-
-    TestOneof.Builder oneofBuilder = TestOneof.newBuilder();
-    mergeFromJson("{\n" + "  \"oneofNullValue\": null \n" + "}", oneofBuilder);
-    oneofMessage = oneofBuilder.build();
-    assertThat(JsonFormat.printer().print(oneofMessage))
-        .isEqualTo("{\n  \"oneofNullValue\": null\n}");
-    assertThat(JsonFormat.printer().includingDefaultValueFields().print(oneofMessage))
-        .isEqualTo("{\n  \"oneofNullValue\": null\n}");
   }
 
   @Test
@@ -1763,8 +2040,8 @@ public class JsonFormatTest {
             "{"
                 + "\"optionalInt32\":1234,"
                 + "\"optionalInt64\":\"1234567890123456789\","
-                + "\"optionalUint32\":5678,"
-                + "\"optionalUint64\":\"2345678901234567890\","
+                + "\"optionalUint32\":4294967295,"
+                + "\"optionalUint64\":\"18446744073709551615\","
                 + "\"optionalSint32\":9012,"
                 + "\"optionalSint64\":\"3456789012345678901\","
                 + "\"optionalFixed32\":3456,"
@@ -1849,7 +2126,40 @@ public class JsonFormatTest {
       parser.merge(input, builder);
       assertWithMessage("Exception is expected.").fail();
     } catch (InvalidProtocolBufferException e) {
-      // Expected.
+      assertThat(e).hasMessageThat().contains("recursion");
+    }
+  }
+
+  @Test
+  public void testRecursionLimitAnyOfAny() throws Exception {
+    String input =
+        "{\n"
+            + "  \"@type\": \"type.googleapis.com/google.protobuf.Any\", \"value\": {\n"
+            + "    \"@type\": \"type.googleapis.com/google.protobuf.Any\", \"value\": {\n"
+            + "      \"@type\": \"type.googleapis.com/google.protobuf.Any\", \"value\": {\n"
+            + "        \"@type\": \"type.googleapis.com/google.protobuf.Any\", \"value\": {\n"
+            + "          \"@type\": \"type.googleapis.com/google.protobuf.Any\"}\n"
+            + "        }\n"
+            + "      }\n"
+            + "    }\n"
+            + "  }\n"
+            + "}\n";
+
+    JsonFormat.TypeRegistry registry =
+        JsonFormat.TypeRegistry.newBuilder().add(Any.getDescriptor()).build();
+
+    JsonFormat.Parser parser = JsonFormat.parser().usingTypeRegistry(registry);
+    Any.Builder builder = Any.newBuilder();
+    parser.merge(input, builder); // Successfully parses with no default recursion limit.
+    Any unused = builder.build();
+
+    parser = JsonFormat.parser().usingTypeRegistry(registry).usingRecursionLimit(3);
+    builder = Any.newBuilder();
+    try {
+      parser.merge(input, builder);
+      assertWithMessage("Exception is expected.").fail();
+    } catch (InvalidProtocolBufferException e) {
+      assertThat(e).hasMessageThat().contains("recursion");
     }
   }
 

@@ -87,14 +87,14 @@ bool HasGenericServices(const FileDescriptor* file) {
 
 std::string GeneratedCodeToBase64(const GeneratedCodeInfo& annotations) {
   std::string result;
-  absl::Base64Escape(annotations.SerializeAsString(), &result);
+  result = absl::Base64Escape(annotations.SerializeAsString());
   return result;
 }
 
 template <typename DescriptorT>
 std::string NamePrefixedWithNestedTypes(const DescriptorT& descriptor,
                                         absl::string_view separator) {
-  std::string name = descriptor.name();
+  std::string name = std::string(descriptor.name());
   const Descriptor* parent = descriptor.containing_type();
   if (parent != nullptr) {
     std::string prefix = NamePrefixedWithNestedTypes(*parent, separator);

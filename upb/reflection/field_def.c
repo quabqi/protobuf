@@ -29,6 +29,7 @@
 #include "upb/mini_table/sub.h"
 #include "upb/reflection/def.h"
 #include "upb/reflection/def_type.h"
+#include "upb/reflection/descriptor_bootstrap.h"
 #include "upb/reflection/internal/def_builder.h"
 #include "upb/reflection/internal/def_pool.h"
 #include "upb/reflection/internal/desc_state.h"
@@ -49,8 +50,8 @@ typedef struct {
 } str_t;
 
 struct upb_FieldDef {
-  const UPB_DESC(FieldOptions*) opts;
-  const UPB_DESC(FeatureSet*) resolved_features;
+  UPB_ALIGN_AS(8) const google_protobuf_FieldOptions* opts;
+  const google_protobuf_FeatureSet* resolved_features;
   const upb_FileDef* file;
   const upb_MessageDef* msgdef;
   const char* full_name;
@@ -71,7 +72,7 @@ struct upb_FieldDef {
   union {
     const upb_MessageDef* msgdef;
     const upb_EnumDef* enumdef;
-    const UPB_DESC(FieldDescriptorProto) * unresolved;
+    const google_protobuf_FieldDescriptorProto* unresolved;
   } sub;
   uint32_t number_;
   uint16_t index_;
@@ -89,7 +90,7 @@ upb_FieldDef* _upb_FieldDef_At(const upb_FieldDef* f, int i) {
   return (upb_FieldDef*)&f[i];
 }
 
-const UPB_DESC(FieldOptions) * upb_FieldDef_Options(const upb_FieldDef* f) {
+const google_protobuf_FieldOptions* upb_FieldDef_Options(const upb_FieldDef* f) {
   return f->opts;
 }
 
@@ -97,8 +98,7 @@ bool upb_FieldDef_HasOptions(const upb_FieldDef* f) {
   return f->opts != (void*)kUpbDefOptDefault;
 }
 
-const UPB_DESC(FeatureSet) *
-    upb_FieldDef_ResolvedFeatures(const upb_FieldDef* f) {
+const google_protobuf_FeatureSet* upb_FieldDef_ResolvedFeatures(const upb_FieldDef* f) {
   return f->resolved_features;
 }
 
@@ -110,26 +110,15 @@ upb_CType upb_FieldDef_CType(const upb_FieldDef* f) {
   return upb_FieldType_CType(f->type_);
 }
 
-upb_FieldType upb_FieldDef_Type(const upb_FieldDef* f) {
-  // TODO: remove once we can deprecate kUpb_FieldType_Group.
-  if (f->type_ == kUpb_FieldType_Message &&
-      UPB_DESC(FeatureSet_message_encoding)(f->resolved_features) ==
-          UPB_DESC(FeatureSet_DELIMITED)) {
-    return kUpb_FieldType_Group;
-  }
-  return f->type_;
-}
+upb_FieldType upb_FieldDef_Type(const upb_FieldDef* f) { return f->type_; }
 
 uint32_t upb_FieldDef_Index(const upb_FieldDef* f) { return f->index_; }
 
-upb_Label upb_FieldDef_Label(const upb_FieldDef* f) {
-  // TODO: remove once we can deprecate kUpb_Label_Required.
-  if (UPB_DESC(FeatureSet_field_presence)(f->resolved_features) ==
-      UPB_DESC(FeatureSet_LEGACY_REQUIRED)) {
-    return kUpb_Label_Required;
-  }
-  return f->label_;
+uint32_t upb_FieldDef_LayoutIndex(const upb_FieldDef* f) {
+  return f->layout_index;
 }
+
+upb_Label upb_FieldDef_Label(const upb_FieldDef* f) { return f->label_; }
 
 uint32_t upb_FieldDef_Number(const upb_FieldDef* f) { return f->number_; }
 
@@ -141,8 +130,8 @@ bool _upb_FieldDef_IsPackable(const upb_FieldDef* f) {
 
 bool upb_FieldDef_IsPacked(const upb_FieldDef* f) {
   return _upb_FieldDef_IsPackable(f) &&
-         UPB_DESC(FeatureSet_repeated_field_encoding(f->resolved_features)) ==
-             UPB_DESC(FeatureSet_PACKED);
+         google_protobuf_FeatureSet_repeated_field_encoding(f->resolved_features) ==
+             google_protobuf_FeatureSet_PACKED;
 }
 
 const char* upb_FieldDef_Name(const upb_FieldDef* f) {
@@ -219,11 +208,11 @@ upb_MessageValue upb_FieldDef_Default(const upb_FieldDef* f) {
 }
 
 const upb_MessageDef* upb_FieldDef_MessageSubDef(const upb_FieldDef* f) {
-  return upb_FieldDef_CType(f) == kUpb_CType_Message ? f->sub.msgdef : NULL;
+  return upb_FieldDef_IsSubMessage(f) ? f->sub.msgdef : NULL;
 }
 
 const upb_EnumDef* upb_FieldDef_EnumSubDef(const upb_FieldDef* f) {
-  return upb_FieldDef_CType(f) == kUpb_CType_Enum ? f->sub.enumdef : NULL;
+  return upb_FieldDef_IsEnum(f) ? f->sub.enumdef : NULL;
 }
 
 const upb_MiniTableField* upb_FieldDef_MiniTable(const upb_FieldDef* f) {
@@ -237,7 +226,7 @@ const upb_MiniTableField* upb_FieldDef_MiniTable(const upb_FieldDef* f) {
   }
 }
 
-const upb_MiniTableExtension* _upb_FieldDef_ExtensionMiniTable(
+const upb_MiniTableExtension* upb_FieldDef_MiniTableExtension(
     const upb_FieldDef* f) {
   UPB_ASSERT(upb_FieldDef_IsExtension(f));
   const upb_FileDef* file = upb_FieldDef_File(f);
@@ -257,8 +246,41 @@ int _upb_FieldDef_LayoutIndex(const upb_FieldDef* f) { return f->layout_index; }
 
 bool _upb_FieldDef_ValidateUtf8(const upb_FieldDef* f) {
   if (upb_FieldDef_Type(f) != kUpb_FieldType_String) return false;
-  return UPB_DESC(FeatureSet_utf8_validation(f->resolved_features)) ==
-         UPB_DESC(FeatureSet_VERIFY);
+  return google_protobuf_FeatureSet_utf8_validation(f->resolved_features) ==
+         google_protobuf_FeatureSet_VERIFY;
+}
+
+bool _upb_FieldDef_IsGroupLike(const upb_FieldDef* f) {
+  // Groups are always tag-delimited.
+  if (f->type_ != kUpb_FieldType_Group) {
+    return false;
+  }
+
+  const upb_MessageDef* msg = upb_FieldDef_MessageSubDef(f);
+
+  // Group fields always are always the lowercase type name.
+  const char* mname = upb_MessageDef_Name(msg);
+  const char* fname = upb_FieldDef_Name(f);
+  size_t name_size = strlen(fname);
+  if (name_size != strlen(mname)) return false;
+  for (size_t i = 0; i < name_size; ++i) {
+    if ((mname[i] | 0x20) != fname[i]) {
+      // Case-insensitive ascii comparison.
+      return false;
+    }
+  }
+
+  if (upb_MessageDef_File(msg) != upb_FieldDef_File(f)) {
+    return false;
+  }
+
+  // Group messages are always defined in the same scope as the field.  File
+  // level extensions will compare NULL == NULL here, which is why the file
+  // comparison above is necessary to ensure both come from the same file.
+  return upb_FieldDef_IsExtension(f) ? upb_FieldDef_ExtensionScope(f) ==
+                                           upb_MessageDef_ContainingType(msg)
+                                     : upb_FieldDef_ContainingType(f) ==
+                                           upb_MessageDef_ContainingType(msg);
 }
 
 uint64_t _upb_FieldDef_Modifiers(const upb_FieldDef* f) {
@@ -287,8 +309,11 @@ bool upb_FieldDef_HasDefault(const upb_FieldDef* f) { return f->has_default; }
 bool upb_FieldDef_HasPresence(const upb_FieldDef* f) { return f->has_presence; }
 
 bool upb_FieldDef_HasSubDef(const upb_FieldDef* f) {
-  return upb_FieldDef_IsSubMessage(f) ||
-         upb_FieldDef_CType(f) == kUpb_CType_Enum;
+  return upb_FieldDef_IsSubMessage(f) || upb_FieldDef_IsEnum(f);
+}
+
+bool upb_FieldDef_IsEnum(const upb_FieldDef* f) {
+  return upb_FieldDef_CType(f) == kUpb_CType_Enum;
 }
 
 bool upb_FieldDef_IsMap(const upb_FieldDef* f) {
@@ -309,8 +334,8 @@ bool upb_FieldDef_IsRepeated(const upb_FieldDef* f) {
 }
 
 bool upb_FieldDef_IsRequired(const upb_FieldDef* f) {
-  return UPB_DESC(FeatureSet_field_presence)(f->resolved_features) ==
-         UPB_DESC(FeatureSet_LEGACY_REQUIRED);
+  return google_protobuf_FeatureSet_field_presence(f->resolved_features) ==
+         google_protobuf_FeatureSet_LEGACY_REQUIRED;
 }
 
 bool upb_FieldDef_IsString(const upb_FieldDef* f) {
@@ -503,7 +528,8 @@ invalid:
                        (int)upb_FieldDef_Type(f));
 }
 
-static void set_default_default(upb_DefBuilder* ctx, upb_FieldDef* f) {
+static void set_default_default(upb_DefBuilder* ctx, upb_FieldDef* f,
+                                bool must_be_empty) {
   switch (upb_FieldDef_CType(f)) {
     case kUpb_CType_Int32:
     case kUpb_CType_Int64:
@@ -525,8 +551,14 @@ static void set_default_default(upb_DefBuilder* ctx, upb_FieldDef* f) {
       f->defaultval.boolean = false;
       break;
     case kUpb_CType_Enum: {
-      const upb_EnumValueDef* v = upb_EnumDef_Value(f->sub.enumdef, 0);
-      f->defaultval.sint = upb_EnumValueDef_Number(v);
+      f->defaultval.sint = upb_EnumDef_Default(f->sub.enumdef);
+      if (must_be_empty && f->defaultval.sint != 0) {
+        _upb_DefBuilder_Errf(ctx,
+                             "Implicit presence field (%s) cannot use an enum "
+                             "type with a non-zero default (%s)",
+                             f->full_name,
+                             upb_EnumDef_FullName(f->sub.enumdef));
+      }
       break;
     }
     case kUpb_CType_Message:
@@ -536,95 +568,78 @@ static void set_default_default(upb_DefBuilder* ctx, upb_FieldDef* f) {
 
 static bool _upb_FieldDef_InferLegacyFeatures(
     upb_DefBuilder* ctx, upb_FieldDef* f,
-    const UPB_DESC(FieldDescriptorProto*) proto,
-    const UPB_DESC(FieldOptions*) options, upb_Syntax syntax,
-    UPB_DESC(FeatureSet*) features) {
+    const google_protobuf_FieldDescriptorProto* proto,
+    const google_protobuf_FieldOptions* options, google_protobuf_Edition edition,
+    google_protobuf_FeatureSet* features) {
   bool ret = false;
 
-  if (UPB_DESC(FieldDescriptorProto_label)(proto) == kUpb_Label_Required) {
-    if (syntax == kUpb_Syntax_Proto3) {
+  if (google_protobuf_FieldDescriptorProto_label(proto) == kUpb_Label_Required) {
+    if (edition == google_protobuf_EDITION_PROTO3) {
       _upb_DefBuilder_Errf(ctx, "proto3 fields cannot be required (%s)",
                            f->full_name);
     }
-    int val = UPB_DESC(FeatureSet_LEGACY_REQUIRED);
-    UPB_DESC(FeatureSet_set_field_presence(features, val));
+    int val = google_protobuf_FeatureSet_LEGACY_REQUIRED;
+    google_protobuf_FeatureSet_set_field_presence(features, val);
     ret = true;
   }
 
-  if (UPB_DESC(FieldDescriptorProto_type)(proto) == kUpb_FieldType_Group) {
-    int val = UPB_DESC(FeatureSet_DELIMITED);
-    UPB_DESC(FeatureSet_set_message_encoding(features, val));
+  if (google_protobuf_FieldDescriptorProto_type(proto) == kUpb_FieldType_Group) {
+    int val = google_protobuf_FeatureSet_DELIMITED;
+    google_protobuf_FeatureSet_set_message_encoding(features, val);
     ret = true;
   }
 
-  if (UPB_DESC(FieldOptions_has_packed)(options)) {
-    int val = UPB_DESC(FieldOptions_packed)(options)
-                  ? UPB_DESC(FeatureSet_PACKED)
-                  : UPB_DESC(FeatureSet_EXPANDED);
-    UPB_DESC(FeatureSet_set_repeated_field_encoding(features, val));
+  if (google_protobuf_FieldOptions_has_packed(options)) {
+    int val = google_protobuf_FieldOptions_packed(options) ? google_protobuf_FeatureSet_PACKED
+                                                  : google_protobuf_FeatureSet_EXPANDED;
+    google_protobuf_FeatureSet_set_repeated_field_encoding(features, val);
     ret = true;
   }
-
-// begin:google_only
-// #ifndef UPB_BOOTSTRAP_STAGE0
-//   if (syntax == kUpb_Syntax_Proto3 &&
-//       UPB_DESC(FieldOptions_has_enforce_utf8)(options) &&
-//       !UPB_DESC(FieldOptions_enforce_utf8)(options)) {
-//     int val = UPB_DESC(FeatureSet_UNVERIFIED);
-//     UPB_DESC(FeatureSet_set_utf8_validation(features, val));
-//     ret = true;
-//   }
-// #endif
-//   // clang-format off
-// end:google_only
-  // clang-format on
 
   return ret;
 }
 
 static void _upb_FieldDef_Create(upb_DefBuilder* ctx, const char* prefix,
-                                 const UPB_DESC(FeatureSet*) parent_features,
-                                 const UPB_DESC(FieldDescriptorProto*)
-                                     field_proto,
+                                 const google_protobuf_FeatureSet* parent_features,
+                                 const google_protobuf_FieldDescriptorProto* field_proto,
                                  upb_MessageDef* m, upb_FieldDef* f) {
   // Must happen before _upb_DefBuilder_Add()
   f->file = _upb_DefBuilder_File(ctx);
 
-  const upb_StringView name = UPB_DESC(FieldDescriptorProto_name)(field_proto);
+  const upb_StringView name = google_protobuf_FieldDescriptorProto_name(field_proto);
   f->full_name = _upb_DefBuilder_MakeFullName(ctx, prefix, name);
-  f->label_ = (int)UPB_DESC(FieldDescriptorProto_label)(field_proto);
-  f->number_ = UPB_DESC(FieldDescriptorProto_number)(field_proto);
+  f->number_ = google_protobuf_FieldDescriptorProto_number(field_proto);
   f->is_proto3_optional =
-      UPB_DESC(FieldDescriptorProto_proto3_optional)(field_proto);
+      google_protobuf_FieldDescriptorProto_proto3_optional(field_proto);
   f->msgdef = m;
   f->scope.oneof = NULL;
 
   UPB_DEF_SET_OPTIONS(f->opts, FieldDescriptorProto, FieldOptions, field_proto);
 
-  upb_Syntax syntax = upb_FileDef_Syntax(f->file);
-  const UPB_DESC(FeatureSet*) unresolved_features =
-      UPB_DESC(FieldOptions_features)(f->opts);
+  google_protobuf_Edition edition = upb_FileDef_Edition(f->file);
+  const google_protobuf_FeatureSet* unresolved_features =
+      google_protobuf_FieldOptions_features(f->opts);
   bool implicit = false;
 
-  if (syntax != kUpb_Syntax_Editions) {
+  if (_upb_DefBuilder_IsLegacyEdition(edition)) {
     upb_Message_Clear(UPB_UPCAST(ctx->legacy_features),
                       UPB_DESC_MINITABLE(FeatureSet));
-    if (_upb_FieldDef_InferLegacyFeatures(ctx, f, field_proto, f->opts, syntax,
+    if (_upb_FieldDef_InferLegacyFeatures(ctx, f, field_proto, f->opts, edition,
                                           ctx->legacy_features)) {
       implicit = true;
       unresolved_features = ctx->legacy_features;
     }
   }
 
-  if (UPB_DESC(FieldDescriptorProto_has_oneof_index)(field_proto)) {
-    int oneof_index = UPB_DESC(FieldDescriptorProto_oneof_index)(field_proto);
+  if (google_protobuf_FieldDescriptorProto_has_oneof_index(field_proto)) {
+    int oneof_index = google_protobuf_FieldDescriptorProto_oneof_index(field_proto);
 
     if (!m) {
       _upb_DefBuilder_Errf(ctx, "oneof field (%s) has no containing msg",
                            f->full_name);
     }
 
-    if (oneof_index >= upb_MessageDef_OneofCount(m)) {
+    if (oneof_index < 0 || oneof_index >= upb_MessageDef_OneofCount(m)) {
       _upb_DefBuilder_Errf(ctx, "oneof_index out of range (%s)", f->full_name);
     }
 
@@ -638,25 +653,33 @@ static void _upb_FieldDef_Create(upb_DefBuilder* ctx, const char* prefix,
   f->resolved_features = _upb_DefBuilder_DoResolveFeatures(
       ctx, parent_features, unresolved_features, implicit);
 
-  if (!UPB_DESC(FieldDescriptorProto_has_name)(field_proto)) {
+  f->label_ = (int)google_protobuf_FieldDescriptorProto_label(field_proto);
+  if (f->label_ == kUpb_Label_Optional &&
+      // TODO: remove once we can deprecate kUpb_Label_Required.
+      google_protobuf_FeatureSet_field_presence(f->resolved_features) ==
+          google_protobuf_FeatureSet_LEGACY_REQUIRED) {
+    f->label_ = kUpb_Label_Required;
+  }
+
+  if (!google_protobuf_FieldDescriptorProto_has_name(field_proto)) {
     _upb_DefBuilder_Errf(ctx, "field has no name");
   }
 
-  f->has_json_name = UPB_DESC(FieldDescriptorProto_has_json_name)(field_proto);
+  f->has_json_name = google_protobuf_FieldDescriptorProto_has_json_name(field_proto);
   if (f->has_json_name) {
     const upb_StringView sv =
-        UPB_DESC(FieldDescriptorProto_json_name)(field_proto);
+        google_protobuf_FieldDescriptorProto_json_name(field_proto);
     f->json_name = upb_strdup2(sv.data, sv.size, ctx->arena);
   } else {
     f->json_name = make_json_name(name.data, name.size, ctx->arena);
   }
   if (!f->json_name) _upb_DefBuilder_OomErr(ctx);
 
-  const bool has_type = UPB_DESC(FieldDescriptorProto_has_type)(field_proto);
+  const bool has_type = google_protobuf_FieldDescriptorProto_has_type(field_proto);
   const bool has_type_name =
-      UPB_DESC(FieldDescriptorProto_has_type_name)(field_proto);
+      google_protobuf_FieldDescriptorProto_has_type_name(field_proto);
 
-  f->type_ = (int)UPB_DESC(FieldDescriptorProto_type)(field_proto);
+  f->type_ = (int)google_protobuf_FieldDescriptorProto_type(field_proto);
 
   if (has_type) {
     switch (f->type_) {
@@ -677,7 +700,7 @@ static void _upb_FieldDef_Create(upb_DefBuilder* ctx, const char* prefix,
     }
   }
 
-  if (!has_type && has_type_name) {
+  if ((!has_type && has_type_name) || f->type_ == kUpb_FieldType_Message) {
     f->type_ =
         UPB_FIELD_TYPE_UNSPECIFIED;  // We'll assign this in resolve_subdef()
   } else {
@@ -697,7 +720,7 @@ static void _upb_FieldDef_Create(upb_DefBuilder* ctx, const char* prefix,
    * to the field_proto until later when we can properly resolve it. */
   f->sub.unresolved = field_proto;
 
-  if (UPB_DESC(FieldDescriptorProto_has_oneof_index)(field_proto)) {
+  if (google_protobuf_FieldDescriptorProto_has_oneof_index(field_proto)) {
     if (upb_FieldDef_Label(f) != kUpb_Label_Optional) {
       _upb_DefBuilder_Errf(ctx, "fields in oneof must have OPTIONAL label (%s)",
                            f->full_name);
@@ -706,21 +729,22 @@ static void _upb_FieldDef_Create(upb_DefBuilder* ctx, const char* prefix,
 
   f->has_presence =
       (!upb_FieldDef_IsRepeated(f)) &&
-      (f->type_ == kUpb_FieldType_Message || f->type_ == kUpb_FieldType_Group ||
-       upb_FieldDef_ContainingOneof(f) ||
-       UPB_DESC(FeatureSet_field_presence)(f->resolved_features) !=
-           UPB_DESC(FeatureSet_IMPLICIT));
+      (f->is_extension || _upb_FileDef_ImplicitFieldPresenceDisabled(f->file) ||
+       (f->type_ == kUpb_FieldType_Message ||
+        f->type_ == kUpb_FieldType_Group || upb_FieldDef_ContainingOneof(f) ||
+        google_protobuf_FeatureSet_field_presence(f->resolved_features) !=
+            google_protobuf_FeatureSet_IMPLICIT));
 }
 
-static void _upb_FieldDef_CreateExt(upb_DefBuilder* ctx, const char* prefix,
-                                    const UPB_DESC(FeatureSet*) parent_features,
-                                    const UPB_DESC(FieldDescriptorProto*)
-                                        field_proto,
-                                    upb_MessageDef* m, upb_FieldDef* f) {
+static void _upb_FieldDef_CreateExt(
+    upb_DefBuilder* ctx, const char* prefix,
+    const google_protobuf_FeatureSet* parent_features,
+    const google_protobuf_FieldDescriptorProto* field_proto, upb_MessageDef* m,
+    upb_FieldDef* f) {
   f->is_extension = true;
   _upb_FieldDef_Create(ctx, prefix, parent_features, field_proto, m, f);
 
-  if (UPB_DESC(FieldDescriptorProto_has_oneof_index)(field_proto)) {
+  if (google_protobuf_FieldDescriptorProto_has_oneof_index(field_proto)) {
     _upb_DefBuilder_Errf(ctx, "oneof_index provided for extension field (%s)",
                          f->full_name);
   }
@@ -731,20 +755,19 @@ static void _upb_FieldDef_CreateExt(upb_DefBuilder* ctx, const char* prefix,
 
   if (ctx->layout) {
     UPB_ASSERT(upb_MiniTableExtension_Number(
-                   _upb_FieldDef_ExtensionMiniTable(f)) == f->number_);
+                   upb_FieldDef_MiniTableExtension(f)) == f->number_);
   }
 }
 
-static void _upb_FieldDef_CreateNotExt(upb_DefBuilder* ctx, const char* prefix,
-                                       const UPB_DESC(FeatureSet*)
-                                           parent_features,
-                                       const UPB_DESC(FieldDescriptorProto*)
-                                           field_proto,
-                                       upb_MessageDef* m, upb_FieldDef* f) {
+static void _upb_FieldDef_CreateNotExt(
+    upb_DefBuilder* ctx, const char* prefix,
+    const google_protobuf_FeatureSet* parent_features,
+    const google_protobuf_FieldDescriptorProto* field_proto, upb_MessageDef* m,
+    upb_FieldDef* f) {
   f->is_extension = false;
   _upb_FieldDef_Create(ctx, prefix, parent_features, field_proto, m, f);
 
-  if (!UPB_DESC(FieldDescriptorProto_has_oneof_index)(field_proto)) {
+  if (!google_protobuf_FieldDescriptorProto_has_oneof_index(field_proto)) {
     if (f->is_proto3_optional) {
       _upb_DefBuilder_Errf(
           ctx,
@@ -756,14 +779,13 @@ static void _upb_FieldDef_CreateNotExt(upb_DefBuilder* ctx, const char* prefix,
   _upb_MessageDef_InsertField(ctx, m, f);
 }
 
-upb_FieldDef* _upb_Extensions_New(upb_DefBuilder* ctx, int n,
-                                  const UPB_DESC(FieldDescriptorProto*)
-                                      const* protos,
-                                  const UPB_DESC(FeatureSet*) parent_features,
-                                  const char* prefix, upb_MessageDef* m) {
+upb_FieldDef* _upb_Extensions_New(
+    upb_DefBuilder* ctx, int n,
+    const google_protobuf_FieldDescriptorProto* const* protos,
+    const google_protobuf_FeatureSet* parent_features, const char* prefix,
+    upb_MessageDef* m) {
   _upb_DefType_CheckPadding(sizeof(upb_FieldDef));
-  upb_FieldDef* defs =
-      (upb_FieldDef*)_upb_DefBuilder_Alloc(ctx, sizeof(upb_FieldDef) * n);
+  upb_FieldDef* defs = UPB_DEFBUILDER_ALLOCARRAY(ctx, upb_FieldDef, n);
 
   for (int i = 0; i < n; i++) {
     upb_FieldDef* f = &defs[i];
@@ -775,15 +797,13 @@ upb_FieldDef* _upb_Extensions_New(upb_DefBuilder* ctx, int n,
   return defs;
 }
 
-upb_FieldDef* _upb_FieldDefs_New(upb_DefBuilder* ctx, int n,
-                                 const UPB_DESC(FieldDescriptorProto*)
-                                     const* protos,
-                                 const UPB_DESC(FeatureSet*) parent_features,
-                                 const char* prefix, upb_MessageDef* m,
-                                 bool* is_sorted) {
+upb_FieldDef* _upb_FieldDefs_New(
+    upb_DefBuilder* ctx, int n,
+    const google_protobuf_FieldDescriptorProto* const* protos,
+    const google_protobuf_FeatureSet* parent_features, const char* prefix,
+    upb_MessageDef* m, bool* is_sorted) {
   _upb_DefType_CheckPadding(sizeof(upb_FieldDef));
-  upb_FieldDef* defs =
-      (upb_FieldDef*)_upb_DefBuilder_Alloc(ctx, sizeof(upb_FieldDef) * n);
+  upb_FieldDef* defs = UPB_DEFBUILDER_ALLOCARRAY(ctx, upb_FieldDef, n);
 
   uint32_t previous = 0;
   for (int i = 0; i < n; i++) {
@@ -809,9 +829,9 @@ upb_FieldDef* _upb_FieldDefs_New(upb_DefBuilder* ctx, int n,
 
 static void resolve_subdef(upb_DefBuilder* ctx, const char* prefix,
                            upb_FieldDef* f) {
-  const UPB_DESC(FieldDescriptorProto)* field_proto = f->sub.unresolved;
-  upb_StringView name = UPB_DESC(FieldDescriptorProto_type_name)(field_proto);
-  bool has_name = UPB_DESC(FieldDescriptorProto_has_type_name)(field_proto);
+  const google_protobuf_FieldDescriptorProto* field_proto = f->sub.unresolved;
+  upb_StringView name = google_protobuf_FieldDescriptorProto_type_name(field_proto);
+  bool has_name = google_protobuf_FieldDescriptorProto_has_type_name(field_proto);
   switch ((int)f->type_) {
     case UPB_FIELD_TYPE_UNSPECIFIED: {
       // Type was not specified and must be inferred.
@@ -826,8 +846,15 @@ static void resolve_subdef(upb_DefBuilder* ctx, const char* prefix,
           break;
         case UPB_DEFTYPE_MSG:
           f->sub.msgdef = def;
-          f->type_ = kUpb_FieldType_Message;  // It appears there is no way of
-                                              // this being a group.
+          f->type_ = kUpb_FieldType_Message;
+          // TODO: remove once we can deprecate
+          // kUpb_FieldType_Group.
+          if (google_protobuf_FeatureSet_message_encoding(f->resolved_features) ==
+                  google_protobuf_FeatureSet_DELIMITED &&
+              !upb_MessageDef_IsMapEntry(def) &&
+              !(f->msgdef && upb_MessageDef_IsMapEntry(f->msgdef))) {
+            f->type_ = kUpb_FieldType_Group;
+          }
           f->has_presence = !upb_FieldDef_IsRepeated(f);
           break;
         default:
@@ -901,14 +928,13 @@ bool upb_FieldDef_MiniDescriptorEncode(const upb_FieldDef* f, upb_Arena* a,
 
 static void resolve_extension(upb_DefBuilder* ctx, const char* prefix,
                               upb_FieldDef* f,
-                              const UPB_DESC(FieldDescriptorProto) *
-                                  field_proto) {
-  if (!UPB_DESC(FieldDescriptorProto_has_extendee)(field_proto)) {
+                              const google_protobuf_FieldDescriptorProto* field_proto) {
+  if (!google_protobuf_FieldDescriptorProto_has_extendee(field_proto)) {
     _upb_DefBuilder_Errf(ctx, "extension for field '%s' had no extendee",
                          f->full_name);
   }
 
-  upb_StringView name = UPB_DESC(FieldDescriptorProto_extendee)(field_proto);
+  upb_StringView name = google_protobuf_FieldDescriptorProto_extendee(field_proto);
   const upb_MessageDef* m =
       _upb_DefBuilder_Resolve(ctx, f->full_name, prefix, name, UPB_DEFTYPE_MSG);
   f->msgdef = m;
@@ -923,7 +949,7 @@ static void resolve_extension(upb_DefBuilder* ctx, const char* prefix,
 
 void _upb_FieldDef_BuildMiniTableExtension(upb_DefBuilder* ctx,
                                            const upb_FieldDef* f) {
-  const upb_MiniTableExtension* ext = _upb_FieldDef_ExtensionMiniTable(f);
+  const upb_MiniTableExtension* ext = upb_FieldDef_MiniTableExtension(f);
 
   if (ctx->layout) {
     UPB_ASSERT(upb_FieldDef_Number(f) == upb_MiniTableExtension_Number(ext));
@@ -942,9 +968,9 @@ void _upb_FieldDef_BuildMiniTableExtension(upb_DefBuilder* ctx,
       const upb_MiniTableEnum* subenum = _upb_EnumDef_MiniTable(f->sub.enumdef);
       sub = upb_MiniTableSub_FromEnum(subenum);
     }
-    bool ok2 = upb_MiniTableExtension_Init(desc.data, desc.size, mut_ext,
-                                           upb_MessageDef_MiniTable(f->msgdef),
-                                           sub, ctx->status);
+    bool ok2 = _upb_MiniTableExtension_Init(desc.data, desc.size, mut_ext,
+                                            upb_MessageDef_MiniTable(f->msgdef),
+                                            sub, ctx->platform, ctx->status);
     if (!ok2) _upb_DefBuilder_Errf(ctx, "Could not build extension mini table");
   }
 
@@ -953,15 +979,31 @@ void _upb_FieldDef_BuildMiniTableExtension(upb_DefBuilder* ctx,
 }
 
 static void resolve_default(upb_DefBuilder* ctx, upb_FieldDef* f,
-                            const UPB_DESC(FieldDescriptorProto) *
-                                field_proto) {
+                            const google_protobuf_FieldDescriptorProto* field_proto) {
+  // Implicit presence fields should always have an effective default of 0.
+  // This should naturally fall out of the validations that protoc performs:
+  // - Implicit presence fields cannot specify a default value.
+  // - Implicit presence fields for for enums can only use open enums, which
+  //   are required to have zero as their default.
+  //   - Even if we are treating all enums as open, the proto compiler will
+  //     still reject using a nominally closed enum with an implicit presence
+  //     field.
+  bool must_be_empty = !f->has_presence && !upb_FieldDef_IsRepeated(f);
+
   // Have to delay resolving of the default value until now because of the enum
   // case, since enum defaults are specified with a label.
-  if (UPB_DESC(FieldDescriptorProto_has_default_value)(field_proto)) {
+  if (google_protobuf_FieldDescriptorProto_has_default_value(field_proto)) {
     upb_StringView defaultval =
-        UPB_DESC(FieldDescriptorProto_default_value)(field_proto);
+        google_protobuf_FieldDescriptorProto_default_value(field_proto);
 
-    if (upb_FileDef_Syntax(f->file) == kUpb_Syntax_Proto3) {
+    if (must_be_empty) {
+      _upb_DefBuilder_Errf(ctx,
+                           "fields with implicit presence cannot have "
+                           "explicit defaults (%s)",
+                           f->full_name);
+    }
+
+    if (upb_FileDef_Edition(f->file) == google_protobuf_EDITION_PROTO3) {
       _upb_DefBuilder_Errf(ctx,
                            "proto3 fields cannot have explicit defaults (%s)",
                            f->full_name);
@@ -976,7 +1018,7 @@ static void resolve_default(upb_DefBuilder* ctx, upb_FieldDef* f,
     parse_default(ctx, defaultval.data, defaultval.size, f);
     f->has_default = true;
   } else {
-    set_default_default(ctx, f);
+    set_default_default(ctx, f, must_be_empty);
     f->has_default = false;
   }
 }
@@ -984,7 +1026,7 @@ static void resolve_default(upb_DefBuilder* ctx, upb_FieldDef* f,
 void _upb_FieldDef_Resolve(upb_DefBuilder* ctx, const char* prefix,
                            upb_FieldDef* f) {
   // We have to stash this away since resolve_subdef() may overwrite it.
-  const UPB_DESC(FieldDescriptorProto)* field_proto = f->sub.unresolved;
+  const google_protobuf_FieldDescriptorProto* field_proto = f->sub.unresolved;
 
   resolve_subdef(ctx, prefix, f);
   resolve_default(ctx, f, field_proto);
